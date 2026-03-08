@@ -360,6 +360,16 @@
                         </div>
                     </div>
 
+                    <div id="agentReportContainer" class="alert alert-info border shadow-sm mb-4" style="display: none; background-color: #f0f9ff; border-color: #bae6fd;">
+                        <div class="d-flex align-items-center mb-2">
+                            <i class="fas fa-robot fa-lg me-2 text-primary"></i>
+                            <strong class="text-primary" style="font-size: 1.1rem;">Yapay Zeka Hematolog Analizi</strong>
+                            <span class="badge bg-primary ms-auto rounded-pill">Gemini 2.5 Flash</span>
+                        </div>
+                        <hr style="border-color: #bae6fd; opacity: 0.5;">
+                        <p class="mb-0 text-dark" id="agentReportText" style="font-style: italic; line-height: 1.6; font-size: 0.95rem;">---</p>
+                    </div>
+
                     <div style="height: 200px; position: relative;" class="mb-4">
                         <canvas id="probChart"></canvas>
                     </div>
@@ -453,6 +463,8 @@
         document.getElementById('gradcamContainer').style.display = 'none';
         document.getElementById('gradcamImage').src = "";
         document.getElementById('originalImage').src = "";
+        document.getElementById('agentReportContainer').style.display = 'none';
+        document.getElementById('agentReportText').textContent = "---";
 
         if (myChart) {
             myChart.destroy();
@@ -550,6 +562,11 @@
         }
 
         updateChart(data.all_probabilities);
+
+        if (data.agent_report) {
+            document.getElementById('agentReportText').textContent = data.agent_report;
+            document.getElementById('agentReportContainer').style.display = 'block';
+        } 
     }
 
     // ===== GRAFİK =====

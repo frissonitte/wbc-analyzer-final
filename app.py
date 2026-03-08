@@ -11,8 +11,12 @@ from flask import Flask, request, jsonify, render_template
 from PIL import Image, UnidentifiedImageError
 import keras
 import base64
+from google import genai
+from google.genai import types
+import PIL.Image
+from dotenv import load_dotenv
 
-mixed_precision = keras.mixed_precision
+mixed_precision = keras.mixed_precision     
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
@@ -125,6 +129,40 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     print(f"DEBUG: Heatmap üretildi! Shape: {result.shape}, "
           f"min: {result.min():.4f}, max: {result.max():.4f}")
     return result
+
+def generate_agent_report(predicted_class, confidence, heatmap_img_array):
+    try:
+        load_dotenv()
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        
+        system_instruction = """
+        Sen periferik yayma analizinde uzman bir yapay zeka hematoloğusun. 
+        Sana bir kan hücresinin XAI (Açıklanabilir Yapay Zeka) Grad-CAM ısı haritası ve modelin tahmin sonuçları verilecek. 
+        Resimdeki KIRMIZI ALANLAR, modelin karar verirken en çok odaklandığı hücre yapılarıdır.
+        Görevlerin:
+        1. Modelin tahminini ve güven skorunu belirt.
+        2. Kırmızı alanların (odak noktalarının) hücrenin neresine (örn: çekirdek, sitoplazma, hücre zarı) denk geldiğini yorumla.
+        3. Modelin odaklandığı yerin tıbbi olarak mantıklı olup olmadığını kısaca değerlendir.
+        Raporun profesyonel, nesnel ve en fazla 3-4 cümle olmalıdır. Kesin teşhis koyma.
+        """
+
+        img_rgb = cv2.cvtColor(heatmap_img_array, cv2.COLOR_BGR2RGB)
+        pil_image = PIL.Image.fromarray(img_rgb)
+        
+        prompt = f"Model bu hücrenin %{confidence * 100:.1f} ihtimalle {predicted_class} olduğunu tahmin etti. Lütfen ekteki ısı haritasını inceleyerek tıbbi bir ön rapor yaz."
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, pil_image],
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2
+            )
+        )
+        return response.text
+    except Exception as e:
+        print(f"Ajan Hatası: {e}")
+        return "Yapay Zeka Raporu şu an oluşturulamadı. Lütfen model sonuçlarını manuel inceleyiniz."
 
 def get_last_conv_layer(model):
     """
@@ -317,14 +355,14 @@ def predict():
                     original_resized = cv2.resize(np.array(pil_img), (224, 224))
                     original_bgr = cv2.cvtColor(original_resized, cv2.COLOR_RGB2BGR)
                     
-                    superimposed = cv2.addWeighted(
+                    superimposed_img = cv2.addWeighted(
                         original_bgr, 0.6,
                         heatmap_colored, 0.4,
                         0
                     )
 
                     # Base64'e encode et
-                    _, buffer = cv2.imencode('.jpg', superimposed, 
+                    _, buffer = cv2.imencode('.jpg', superimposed_img, 
                                             [cv2.IMWRITE_JPEG_QUALITY, 90])
                     heatmap_base64 = base64.b64encode(buffer).decode('utf-8')
                     print(f"DEBUG: Heatmap base64 uzunluğu: {len(heatmap_base64)}")
@@ -337,20 +375,27 @@ def predict():
             print(f"DEBUG: Grad-CAM HATA: {e}")
             traceback.print_exc()
         # ===== GRAD-CAM BÖLÜMÜ SONU =====
-        
-        return jsonify(
-            {
-                "predicted_class": predicted_class,
-                "confidence": confidence,
-                "description": class_descriptions.get(predicted_class, ""),
-                "all_probabilities": all_probs,
-                "tech_details": {
-                    "filter": "Medical Enhanced (CLAHE + Sharpening)",
-                    "architecture": "DenseNet121 + Attention Block",
-                },
-                "heatmap": heatmap_base64
-            }
-        )
+
+        agent_report = ""
+        if heatmap is not None:
+            print("Ajan rapor yazıyor...")
+            agent_report = generate_agent_report(predicted_class, confidence, superimposed_img)
+            print("Ajan raporu tamamlandı!")
+        else:
+            agent_report = "Isı haritası oluşturulamadığı için detaylı analiz yapılamadı."
+
+        return jsonify({
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "description": class_descriptions.get(predicted_class, ""),
+            "all_probabilities": all_probs,
+            "tech_details": {
+                "filter": "Medical Enhanced (CLAHE + Sharpening)",
+                "architecture": "DenseNet121 + Attention Block",
+            },
+            "heatmap": heatmap_base64,
+            "agent_report": agent_report
+        })
 
     except Exception as e:
         app.logger.error(f"Error: {e}", exc_info=True)

@@ -2,3 +2,4 @@ data/
 venv/
 api.log
 __pycache__/
+.env
