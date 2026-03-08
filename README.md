@@ -28,9 +28,11 @@ After downloading, place it in: `data/models/`
 git clone [https://github.com/frissonitte/wbc-analyzer-final.git](https://github.com/frissonitte/wbc-analyzer-final.git)
 cd wbc-final
 pip install -r requirements.txt
-# Set your Gemini API Key in your environment variables
-export GEMINI_API_KEY="your_api_key_here"
+
+Set your Gemini API Key in your .env file as GEMINI_API_KEY
+
 python app.py
+```
 
 Roadmap
 
