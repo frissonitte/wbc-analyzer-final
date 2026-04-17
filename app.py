@@ -3,6 +3,7 @@ import sys
 import io
 import logging
 import logging.handlers
+import socket
 import numpy as np
 import cv2
 import tensorflow as tf
@@ -30,6 +31,30 @@ except:
     pass
 
 app = Flask(__name__)
+
+
+def find_available_port(host, preferred_port, max_attempts=20):
+    """
+    Return the first bindable port starting from preferred_port.
+    Falls back when Windows blocks or another process already owns the port.
+    """
+
+    bind_host = "127.0.0.1" if host == "0.0.0.0" else host
+    retryable_errors = {13, 48, 98, 10013, 10048}
+
+    for port in range(preferred_port, preferred_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((bind_host, port))
+                return port
+            except OSError as exc:
+                if exc.errno not in retryable_errors:
+                    raise
+
+    raise RuntimeError(
+        f"{preferred_port}-{preferred_port + max_attempts - 1} araliginda uygun port bulunamadi."
+    )
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
 
@@ -413,4 +438,23 @@ if __name__ == "__main__":
     app.logger.setLevel(logging.INFO)
 
     print("WBC Analiz Sistemi Başlatılıyor...")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    host = os.getenv("FLASK_HOST", "127.0.0.1")
+    debug = os.getenv("FLASK_DEBUG", "1").strip().lower() in {"1", "true", "yes", "on"}
+    use_reloader = (
+        os.getenv("FLASK_USE_RELOADER", "0").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+    try:
+        preferred_port = int(os.getenv("FLASK_PORT", "5000"))
+    except ValueError:
+        preferred_port = 5000
+
+    port = find_available_port(host, preferred_port)
+
+    if port != preferred_port:
+        print(
+            f"Port {preferred_port} kullanilamiyor. Sunucu otomatik olarak {port} portuna gececek."
+        )
+
+    print(f"Sunucu http://{host}:{port} adresinde baslatiliyor")
+    app.run(debug=debug, use_reloader=use_reloader, host=host, port=port)
