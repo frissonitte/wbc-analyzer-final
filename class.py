@@ -34,12 +34,12 @@ def parse_args():
     )
     parser.add_argument(
         "--model-path",
-        default=None,
+        default="data/models/wbc_final_model_densenet.keras",
         help="Keras model dosya yolu. Verilmezse yaygin konumlar otomatik denenir.",
     )
     parser.add_argument(
         "--output-dir",
-        default="outputs/classification_metrics",
+        default="outputs/final",
         help="Rapor ve gorsellerin kaydedilecegi dizin.",
     )
     parser.add_argument(
@@ -54,6 +54,41 @@ def parse_args():
         default=None,
         help="Hizli test icin her split'te islenecek maksimum goruntu sayisi.",
     )
+    parser.add_argument(
+        "--tta",
+        choices=["none", "light"],
+        default="light",
+        help="Test-time augmentation modu. 'light' modunda flip/rotasyon/parlaklik ortalamasi uygulanir.",
+    )
+    parser.add_argument(
+        "--testb-binary-mode",
+        choices=["none", "main", "aux"],
+        default="main",
+        help="Sadece TestB icin 2 sinifa zorlayici tahmin modu: none=5-sinif, main=main_out icinden N/L sec, aux=aux cikisindan N/L sec.",
+    )
+    parser.add_argument(
+        "--color-normalization",
+        choices=["none", "reinhard"],
+        default="reinhard",
+        help="Inference oncesi renk normalizasyonu.",
+    )
+    parser.add_argument(
+        "--normalization-reference-split",
+        default="Train",
+        help="Reinhard referans istatistiklerinin hesaplanacagi split klasoru.",
+    )
+    parser.add_argument(
+        "--normalization-reference-samples",
+        type=int,
+        default=1200,
+        help="Reinhard referansi icin kullanilacak maksimum goruntu sayisi.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Rastgelelik tohumu.",
+    )
     return parser.parse_args()
 
 
@@ -64,16 +99,11 @@ def resolve_model_path(explicit_path=None):
             return candidate
         raise FileNotFoundError(f"Model bulunamadi: {candidate}")
 
-    candidates = [
-        Path("models/wbc_final_model_densenet.keras"),
-        Path("data/models/wbc_final_model_densenet.keras"),
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
+    default_path = Path("data/models/wbc_final_model_densenet.keras")
+    if default_path.exists():
+        return default_path
 
-    searched = ", ".join(str(path) for path in candidates)
-    raise FileNotFoundError(f"Model bulunamadi. Denenen yollar: {searched}")
+    raise FileNotFoundError(f"Model bulunamadi: {default_path}")
 
 
 def load_trained_model(model_path):
@@ -84,6 +114,90 @@ def load_trained_model(model_path):
         "wbc_focal_loss": WBCFocalLoss,
     }
     return tf.keras.models.load_model(model_path, custom_objects=custom_objects)
+
+
+def extract_predictions(predictions):
+    aux_predictions = None
+
+    if isinstance(predictions, dict):
+        if "main_out" in predictions:
+            main_predictions = predictions["main_out"]
+        else:
+            main_predictions = next(iter(predictions.values()))
+
+        if "aux_binary_out" in predictions:
+            aux_predictions = predictions["aux_binary_out"]
+    elif isinstance(predictions, (list, tuple)):
+        main_predictions = predictions[0]
+        if len(predictions) > 1:
+            aux_predictions = predictions[1]
+    else:
+        main_predictions = predictions
+
+    main_predictions = np.array(main_predictions, dtype=np.float32)
+    if aux_predictions is None:
+        return main_predictions, None
+
+    aux_predictions = np.array(aux_predictions, dtype=np.float32).reshape((-1,))
+    return main_predictions, aux_predictions
+
+
+def estimate_reinhard_reference(data_root, split_name, image_size, max_samples, seed):
+    split_dir = Path(data_root) / split_name
+    if not split_dir.exists():
+        print(f"Uyari: Reinhard referans split bulunamadi: {split_dir}")
+        return None, None
+
+    image_paths = []
+    for class_name in CLASS_NAMES:
+        class_dir = split_dir / class_name
+        if not class_dir.exists():
+            continue
+        for image_path in class_dir.iterdir():
+            if image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                image_paths.append(image_path)
+
+    if not image_paths:
+        print("Uyari: Reinhard referansi icin goruntu bulunamadi.")
+        return None, None
+
+    rng = np.random.default_rng(seed)
+    n_samples = min(max_samples, len(image_paths))
+    chosen = list(rng.choice(image_paths, size=n_samples, replace=False))
+
+    means = []
+    stds = []
+    for image_path in chosen:
+        image = cv2.imread(str(image_path))
+        if image is None:
+            continue
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.resize(image, (image_size, image_size))
+        lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB).astype(np.float32)
+        means.append(np.mean(lab, axis=(0, 1)))
+        stds.append(np.std(lab, axis=(0, 1)) + 1e-6)
+
+    if not means:
+        print("Uyari: Reinhard referans istatistigi hesaplanamadi.")
+        return None, None
+
+    target_mean = np.mean(np.array(means, dtype=np.float32), axis=0)
+    target_std = np.mean(np.array(stds, dtype=np.float32), axis=0)
+    return target_mean.astype(np.float32), target_std.astype(np.float32)
+
+
+def apply_reinhard_normalization(image, target_mean, target_std):
+    if target_mean is None or target_std is None:
+        return image
+
+    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB).astype(np.float32)
+    src_mean = np.mean(lab, axis=(0, 1))
+    src_std = np.std(lab, axis=(0, 1)) + 1e-6
+
+    normalized = (lab - src_mean) / src_std
+    normalized = normalized * target_std + target_mean
+    normalized = np.clip(normalized, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(normalized, cv2.COLOR_LAB2RGB)
 
 
 def collect_samples(split_dir, limit=None):
@@ -115,7 +229,7 @@ def collect_samples(split_dir, limit=None):
     return samples
 
 
-def preprocess_image(image_path):
+def preprocess_image(image_path, color_normalization, target_lab_mean, target_lab_std):
     try:
         image = Image.open(image_path).convert("RGB")
     except UnidentifiedImageError as exc:
@@ -123,10 +237,96 @@ def preprocess_image(image_path):
 
     image_np = np.array(image)
     image_np = cv2.resize(image_np, (224, 224))
+    if color_normalization == "reinhard":
+        image_np = apply_reinhard_normalization(image_np, target_lab_mean, target_lab_std)
     return PreprocessingFilters.medical_enhanced(image_np)
 
 
-def predict_samples(model, samples, batch_size):
+def build_tta_batch(image):
+    # Keep TTA deterministic for reproducible evaluation.
+    augmented = [
+        image,
+        np.fliplr(image),
+        np.flipud(image),
+        np.rot90(image, 1),
+        np.rot90(image, 2),
+        np.rot90(image, 3),
+        np.clip(image * 1.1, 0.0, 1.0),
+        np.clip(image * 0.9, 0.0, 1.0),
+    ]
+    return np.array(augmented, dtype=np.float32)
+
+
+def infer_main_and_aux(model, batch_images, tta_mode):
+    if tta_mode == "none":
+        predictions = model.predict(np.array(batch_images, dtype=np.float32), verbose=0)
+        return extract_predictions(predictions)
+
+    aggregated_main = []
+    aggregated_aux = []
+    aux_found = False
+
+    for image in batch_images:
+        tta_batch = build_tta_batch(image)
+        predictions = model.predict(tta_batch, verbose=0)
+        main_predictions, aux_predictions = extract_predictions(predictions)
+        aggregated_main.append(np.mean(main_predictions, axis=0))
+
+        if aux_predictions is not None:
+            aux_found = True
+            aggregated_aux.append(float(np.mean(aux_predictions)))
+
+    main_out = np.array(aggregated_main, dtype=np.float32)
+    if not aux_found:
+        return main_out, None
+
+    return main_out, np.array(aggregated_aux, dtype=np.float32)
+
+
+def apply_testb_binary_mode(main_predictions, aux_predictions, mode):
+    lymphocyte_idx = CLASS_NAMES.index("Lymphocyte")
+    neutrophil_idx = CLASS_NAMES.index("Neutrophil")
+
+    if mode == "none":
+        predicted_indices = np.argmax(main_predictions, axis=1)
+        return predicted_indices, main_predictions
+
+    if mode == "main":
+        binary_probs = main_predictions[:, [lymphocyte_idx, neutrophil_idx]]
+        denom = np.sum(binary_probs, axis=1, keepdims=True) + 1e-8
+        binary_probs = binary_probs / denom
+        pick_neutrophil = binary_probs[:, 1] >= binary_probs[:, 0]
+        predicted_indices = np.where(pick_neutrophil, neutrophil_idx, lymphocyte_idx)
+
+        adjusted_probs = np.zeros_like(main_predictions)
+        adjusted_probs[:, lymphocyte_idx] = binary_probs[:, 0]
+        adjusted_probs[:, neutrophil_idx] = binary_probs[:, 1]
+        return predicted_indices, adjusted_probs
+
+    if aux_predictions is None:
+        print("Uyari: aux_binary_out bulunamadi, testb-binary-mode=aux modu main moduna dusuruldu.")
+        return apply_testb_binary_mode(main_predictions, aux_predictions, mode="main")
+
+    aux_probs = np.clip(aux_predictions.astype(np.float32), 0.0, 1.0)
+    predicted_indices = np.where(aux_probs >= 0.5, neutrophil_idx, lymphocyte_idx)
+
+    adjusted_probs = np.zeros_like(main_predictions)
+    adjusted_probs[:, lymphocyte_idx] = 1.0 - aux_probs
+    adjusted_probs[:, neutrophil_idx] = aux_probs
+    return predicted_indices, adjusted_probs
+
+
+def predict_samples(
+    model,
+    samples,
+    batch_size,
+    split_name,
+    tta_mode,
+    testb_binary_mode,
+    color_normalization,
+    target_lab_mean,
+    target_lab_std,
+):
     label_to_index = {name: idx for idx, name in enumerate(CLASS_NAMES)}
     y_true = []
     y_pred = []
@@ -141,7 +341,14 @@ def predict_samples(model, samples, batch_size):
 
         for image_path, class_name in batch:
             try:
-                batch_images.append(preprocess_image(image_path))
+                batch_images.append(
+                    preprocess_image(
+                        image_path,
+                        color_normalization=color_normalization,
+                        target_lab_mean=target_lab_mean,
+                        target_lab_std=target_lab_std,
+                    )
+                )
                 batch_true.append(label_to_index[class_name])
                 batch_paths.append(str(image_path))
             except ValueError as exc:
@@ -150,12 +357,18 @@ def predict_samples(model, samples, batch_size):
         if not batch_images:
             continue
 
-        predictions = model.predict(np.array(batch_images, dtype=np.float32), verbose=0)
-        predicted_indices = np.argmax(predictions, axis=1)
+        predictions, aux_predictions = infer_main_and_aux(model, batch_images, tta_mode=tta_mode)
+
+        active_binary_mode = testb_binary_mode if split_name == "TestB" else "none"
+        predicted_indices, adjusted_predictions = apply_testb_binary_mode(
+            predictions,
+            aux_predictions,
+            mode=active_binary_mode,
+        )
 
         y_true.extend(batch_true)
         y_pred.extend(predicted_indices.tolist())
-        probabilities.extend(predictions.tolist())
+        probabilities.extend(adjusted_predictions.tolist())
         file_paths.extend(batch_paths)
 
     return y_true, y_pred, probabilities, file_paths
@@ -281,14 +494,36 @@ def save_predictions_csv(output_path, file_paths, y_true, y_pred, probabilities)
             handle.write(",".join(row) + "\n")
 
 
-def evaluate_split(model, split_name, split_dir, output_dir, batch_size, limit=None):
+def evaluate_split(
+    model,
+    split_name,
+    split_dir,
+    output_dir,
+    batch_size,
+    tta_mode,
+    testb_binary_mode,
+    color_normalization,
+    target_lab_mean,
+    target_lab_std,
+    limit=None,
+):
     samples = collect_samples(split_dir, limit=limit)
     if not samples:
         print(f"{split_name}: islenecek goruntu bulunamadi.")
         return None
 
     print(f"{split_name}: {len(samples)} goruntu isleniyor...")
-    y_true, y_pred, probabilities, file_paths = predict_samples(model, samples, batch_size)
+    y_true, y_pred, probabilities, file_paths = predict_samples(
+        model,
+        samples,
+        batch_size,
+        split_name=split_name,
+        tta_mode=tta_mode,
+        testb_binary_mode=testb_binary_mode,
+        color_normalization=color_normalization,
+        target_lab_mean=target_lab_mean,
+        target_lab_std=target_lab_std,
+    )
 
     report_text, _ = build_classification_report(y_true, y_pred)
 
@@ -376,8 +611,31 @@ def main():
     print(f"Model: {model_path}")
     print(f"Veri klasoru: {data_root}")
     print(f"Cikti klasoru: {output_dir}")
+    print(f"TTA: {args.tta}")
+    print(f"TestB binary mode: {args.testb_binary_mode}")
+    print(f"Color normalization: {args.color_normalization}")
 
     model = load_trained_model(model_path)
+
+    target_lab_mean = None
+    target_lab_std = None
+    if args.color_normalization == "reinhard":
+        target_lab_mean, target_lab_std = estimate_reinhard_reference(
+            data_root=data_root,
+            split_name=args.normalization_reference_split,
+            image_size=224,
+            max_samples=args.normalization_reference_samples,
+            seed=args.seed,
+        )
+        if target_lab_mean is None or target_lab_std is None:
+            print("Uyari: Reinhard referansi hesaplanamadi, color-normalization=none olarak devam ediliyor.")
+            args.color_normalization = "none"
+        else:
+            print(
+                "Reinhard reference estimated: "
+                f"mean={np.round(target_lab_mean, 2).tolist()}, "
+                f"std={np.round(target_lab_std, 2).tolist()}"
+            )
 
     results = []
     for split_name in ["TestA", "TestB"]:
@@ -389,6 +647,11 @@ def main():
                 split_dir=split_dir,
                 output_dir=output_dir,
                 batch_size=args.batch_size,
+                tta_mode=args.tta,
+                testb_binary_mode=args.testb_binary_mode,
+                color_normalization=args.color_normalization,
+                target_lab_mean=target_lab_mean,
+                target_lab_std=target_lab_std,
                 limit=args.limit,
             )
         )
