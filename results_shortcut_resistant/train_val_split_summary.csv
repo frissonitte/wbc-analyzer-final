@@ -1,0 +1,6 @@
+class,train_count,val_count
+Basophil,181,31
+Eosinophil,632,111
+Lymphocyte,2063,364
+Monocyte,477,84
+Neutrophil,5297,934

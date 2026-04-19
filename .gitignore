@@ -3,3 +3,5 @@ data/
 api.log
 __pycache__/
 .env
+# Ignore generated prediction CSVs
+outputs/**/predictions.csv
