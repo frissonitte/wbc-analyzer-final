@@ -33,6 +33,32 @@ except:
 app = Flask(__name__)
 
 
+def get_main_output_tensor(model):
+    if not isinstance(model.output, (list, tuple)):
+        return model.output
+
+    for output_tensor in model.outputs:
+        tensor_name = output_tensor.name.split(":")[0]
+        if tensor_name.startswith("main_out"):
+            return output_tensor
+
+    return model.outputs[0]
+
+
+def extract_main_predictions(predictions):
+    if isinstance(predictions, dict):
+        if "main_out" in predictions:
+            main_predictions = predictions["main_out"]
+        else:
+            main_predictions = next(iter(predictions.values()))
+    elif isinstance(predictions, (list, tuple)):
+        main_predictions = predictions[0]
+    else:
+        main_predictions = predictions
+
+    return np.array(main_predictions, dtype=np.float32)
+
+
 def find_available_port(host, preferred_port, max_attempts=20):
     """
     Return the first bindable port starting from preferred_port.
@@ -61,99 +87,55 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     try:
         last_conv_layer = model.get_layer(last_conv_layer_name)
     except ValueError:
-        print(f"HATA: '{last_conv_layer_name}' katmanı modelde bulunamadı!")
+        print(f"HATA: '{last_conv_layer_name}' katmani modelde bulunamadi!")
         return None
 
-    # Gradient modeli
     try:
+        main_output_tensor = get_main_output_tensor(model)
         grad_model = tf.keras.Model(
             inputs=model.inputs,
-            outputs=[last_conv_layer.output, model.output]
+            outputs=[last_conv_layer.output, main_output_tensor],
         )
-        print(f"DEBUG: Gradient modeli oluşturuldu. "
-              f"Conv çıktı: {last_conv_layer.output.shape}, "
-              f"Model çıktı: {model.output.shape}")
     except Exception as e:
-        print(f"HATA: Gradient modeli oluşturulamadı: {e}")
+        print(f"HATA: Gradient modeli olusturulamadi: {e}")
         traceback.print_exc()
         return None
 
-    # Mixed precision güvenliği için
     img_array = tf.cast(img_array, tf.float32)
 
-    # Gradient hesapla
-    with tf.GradientTape(watch_accessed_variables=True) as tape:
-        # Conv çıktısını açıkça izle
+    with tf.GradientTape() as tape:
         conv_outputs, predictions = grad_model(img_array, training=False)
-        
-        # float32'ye dönüştür (mixed_float16 koruma)
-        conv_outputs_f32 = tf.cast(conv_outputs, tf.float32)
-        predictions_f32 = tf.cast(predictions, tf.float32)
-
-        # tape'e conv_outputs'u izlemesini söyle
-        tape.watch(conv_outputs)
+        predictions = tf.cast(predictions, tf.float32)
 
         if pred_index is None:
-            pred_index = tf.argmax(predictions_f32[0])
-        
-        class_channel = predictions_f32[:, pred_index]
-        
-        print(f"DEBUG: pred_index={pred_index}, "
-              f"class_score={class_channel.numpy()[0]:.4f}, "
-              f"conv_outputs shape={conv_outputs.shape}")
+            pred_index = tf.argmax(predictions[0])
 
-    # Gradient hesapla - conv_outputs'a göre
+        class_channel = predictions[:, pred_index]
+
     grads = tape.gradient(class_channel, conv_outputs)
-
     if grads is None:
-        print("HATA: Gradientler hala None!")
-        print("DEBUG: Alternatif yöntem deneniyor...")
-        
-        # ALTERNATİF YÖNTEM: Yeni tape ile tekrar dene
-        try:
-            with tf.GradientTape() as tape2:
-                tape2.watch(img_array)
-                conv_outputs2, predictions2 = grad_model(img_array, training=False)
-                tape2.watch(conv_outputs2)
-                predictions2 = tf.cast(predictions2, tf.float32)
-                if pred_index is None:
-                    pred_index = tf.argmax(predictions2[0])
-                class_channel2 = predictions2[:, pred_index]
-            
-            grads = tape2.gradient(class_channel2, conv_outputs2)
-            conv_outputs = conv_outputs2
-            
-            if grads is None:
-                print("HATA: Alternatif yöntem de başarısız!")
-                return None
-            else:
-                print("DEBUG: Alternatif yöntem BAŞARILI!")
-        except Exception as e2:
-            print(f"HATA: Alternatif yöntem exception: {e2}")
-            return None
+        print("HATA: Grad-CAM gradient uretilemedi.")
+        return None
 
-    print(f"DEBUG: Gradientler alındı! Shape: {grads.shape}, "
-          f"min: {tf.reduce_min(grads).numpy():.6f}, "
-          f"max: {tf.reduce_max(grads).numpy():.6f}")
+    conv_outputs = tf.cast(conv_outputs[0], tf.float32)
+    grads = tf.cast(grads[0], tf.float32)
 
-    # Global Average Pooling
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    # Guided Grad-CAM: negatif aktivasyon/gradient etkisini baskilar.
+    guided_grads = (
+        tf.cast(conv_outputs > 0, tf.float32)
+        * tf.cast(grads > 0, tf.float32)
+        * grads
+    )
+    weights = tf.reduce_mean(guided_grads, axis=(0, 1))
+    heatmap = tf.reduce_sum(conv_outputs * weights, axis=-1)
 
-    # Heatmap hesabı
-    conv_output_vals = conv_outputs[0]
-    heatmap = conv_output_vals @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-
-    # ReLU + normalizasyon
     heatmap = tf.maximum(heatmap, 0)
     max_val = tf.reduce_max(heatmap)
-    if max_val > 0:
-        heatmap = heatmap / max_val
+    if float(max_val.numpy()) <= 0:
+        return None
 
-    result = heatmap.numpy()
-    print(f"DEBUG: Heatmap üretildi! Shape: {result.shape}, "
-          f"min: {result.min():.4f}, max: {result.max():.4f}")
-    return result
+    heatmap = heatmap / max_val
+    return heatmap.numpy().astype(np.float32)
 
 def generate_agent_report(predicted_class, confidence, heatmap_img_array):
     try:
@@ -193,67 +175,26 @@ def get_last_conv_layer(model):
     """
     Grad-CAM için en uygun katmanı bulur.
     """
-    
-    known_target_layers = [
-        'conv5_block16_2_conv',
-        'conv5_block16_concat',
-        'bn',              
-        'relu',
-    ]
-    
-    for name in known_target_layers:
+
+    for layer in reversed(model.layers):
         try:
-            layer = model.get_layer(name)
-            shape = layer.output.shape
-            if len(shape) == 4:
-                print(f"DEBUG: Grad-CAM katmanı (bilinen isim): '{name}', shape: {shape}")
-                return name
-        except (ValueError, Exception):
-            continue
-
-    skip_keywords = [
-        'input', 'random_rotation', 'random_flip',
-        'random_zoom', 'random_contrast', 'rescaling',
-        'dropout', 'lambda', 'global', 'flatten', 'dense',
-        'batch_normalization', 'softmax',
-        'attention',    # ← Custom attention block'u atla
-        'med_swish',    # ← Custom activation'ı atla
-        'wbc_',         # ← Diğer custom layer'ları atla
-    ]
-
-    candidate = None
-
-    for layer in model.layers:
-        name_lower = layer.name.lower()
-
-        if any(s in name_lower for s in skip_keywords):
-            continue
-
-        try:
-            output_tensor = layer.output
-            if hasattr(output_tensor, 'shape'):
-                shape = output_tensor.shape
-            else:
+            is_conv = isinstance(layer, tf.keras.layers.Conv2D)
+            if not is_conv:
                 continue
 
-            if len(shape) == 4:
-                h = shape[1]
-                w = shape[2]
-                if h is not None and w is not None and h > 1 and w > 1:
-                    candidate = layer.name
+            shape = layer.output.shape
+            if len(shape) != 4:
+                continue
+
+            h, w = shape[1], shape[2]
+            if h is not None and w is not None and h > 1 and w > 1:
+                print(f"DEBUG: Grad-CAM katmani secildi: '{layer.name}', shape: {shape}")
+                return layer.name
         except Exception:
             continue
 
-    if candidate:
-        try:
-            shape = model.get_layer(candidate).output.shape
-            print(f"DEBUG: Grad-CAM katmanı (tarama): '{candidate}', shape: {shape}")
-        except:
-            print(f"DEBUG: Grad-CAM katmanı (tarama): '{candidate}'")
-    else:
-        print("DEBUG: Hiçbir uygun Grad-CAM katmanı bulunamadı!")
-
-    return candidate
+    print("DEBUG: Uygun bir Conv2D katmani bulunamadi.")
+    return None
 
 custom_objects = {
     "MedSwish": MedSwish,
@@ -334,7 +275,7 @@ def predict():
         except UnidentifiedImageError:
             return jsonify({"error": "Görüntü dosyası bozuk veya okunamıyor."}), 400
 
-        predictions = model.predict(img_batch, verbose=0)
+        predictions = extract_main_predictions(model.predict(img_batch, verbose=0))
         predicted_index = np.argmax(predictions[0])
         predicted_class = class_names[predicted_index]
         confidence = float(predictions[0][predicted_index])
@@ -347,6 +288,8 @@ def predict():
 
         # ===== GRAD-CAM BÖLÜMÜ =====
         heatmap_base64 = None
+        heatmap = None
+        superimposed_img = None
         try:
             last_conv_layer_name = get_last_conv_layer(model)
             print(f"DEBUG: Grad-CAM katmanı: {last_conv_layer_name}")
@@ -371,25 +314,58 @@ def predict():
                         else:
                             heatmap = np.zeros((7, 7), dtype=np.float32)
 
-                    # 224x224'e resize
+                    # 224x224'e resize + yumusatma
                     heatmap_resized = cv2.resize(heatmap, (224, 224))
+                    heatmap_resized = cv2.GaussianBlur(heatmap_resized, (0, 0), sigmaX=2.0)
+
+                    # Arka plani baskilamak icin yumuşak hucre maskesi uygula.
+                    original_resized = cv2.resize(np.array(pil_img), (224, 224))
+                    foreground_mask = PreprocessingFilters.estimate_foreground_mask(original_resized)
+                    heatmap_resized = heatmap_resized * (0.05 + 0.95 * foreground_mask)
+
+                    max_heatmap = float(np.max(heatmap_resized))
+                    if max_heatmap > 0:
+                        heatmap_resized = heatmap_resized / max_heatmap
+
+                    # Dusuk aktivasyonlari gosterme: yalnizca ust persentildeki alanlari vurgula.
+                    heatmap_focus = np.power(np.clip(heatmap_resized, 0.0, 1.0), 1.6)
+                    foreground_pixels = heatmap_focus[foreground_mask > 0.15]
+                    if foreground_pixels.size > 50:
+                        focus_threshold = float(np.percentile(foreground_pixels, 82))
+                    else:
+                        focus_threshold = 0.65
+                    focus_threshold = float(np.clip(focus_threshold, 0.45, 0.9))
+
+                    focus_alpha = np.clip(
+                        (heatmap_focus - focus_threshold) / (1.0 - focus_threshold + 1e-6),
+                        0.0,
+                        1.0,
+                    )
+                    focus_alpha = focus_alpha * np.clip(foreground_mask, 0.0, 1.0)
+
                     heatmap_uint8 = np.uint8(255 * heatmap_resized)
                     heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
 
                     # Orijinal görüntü ile overlay (süperimpoze)
-                    original_resized = cv2.resize(np.array(pil_img), (224, 224))
                     original_bgr = cv2.cvtColor(original_resized, cv2.COLOR_RGB2BGR)
-                    
-                    superimposed_img = cv2.addWeighted(
-                        original_bgr, 0.6,
-                        heatmap_colored, 0.4,
-                        0
-                    )
+
+                    mask_3ch = np.repeat(foreground_mask[:, :, np.newaxis], 3, axis=2)
+                    visualization_base = (
+                        original_bgr.astype(np.float32) * (0.55 + 0.45 * mask_3ch)
+                    ).astype(np.uint8)
+
+                    # Dinamik alfa ile yalnizca guclu XAI odaklarini boya.
+                    alpha_3ch = np.repeat((0.78 * focus_alpha)[:, :, np.newaxis], 3, axis=2)
+                    superimposed_img = (
+                        visualization_base.astype(np.float32) * (1.0 - alpha_3ch)
+                        + heatmap_colored.astype(np.float32) * alpha_3ch
+                    ).astype(np.uint8)
 
                     # Base64'e encode et
-                    _, buffer = cv2.imencode('.jpg', superimposed_img, 
-                                            [cv2.IMWRITE_JPEG_QUALITY, 90])
-                    heatmap_base64 = base64.b64encode(buffer).decode('utf-8')
+                    _, buffer = cv2.imencode(
+                        ".jpg", superimposed_img, [cv2.IMWRITE_JPEG_QUALITY, 90]
+                    )
+                    heatmap_base64 = base64.b64encode(buffer).decode("utf-8")
                     print(f"DEBUG: Heatmap base64 uzunluğu: {len(heatmap_base64)}")
                 else:
                     print("DEBUG: Heatmap None veya boş!")
@@ -402,7 +378,7 @@ def predict():
         # ===== GRAD-CAM BÖLÜMÜ SONU =====
 
         agent_report = ""
-        if heatmap is not None:
+        if superimposed_img is not None:
             print("Ajan rapor yazıyor...")
             agent_report = generate_agent_report(predicted_class, confidence, superimposed_img)
             print("Ajan raporu tamamlandı!")
@@ -417,6 +393,7 @@ def predict():
             "tech_details": {
                 "filter": "Medical Enhanced (CLAHE + Sharpening)",
                 "architecture": "DenseNet121 + Attention Block",
+                "xai": "Guided Grad-CAM + foreground-masked visualization",
             },
             "heatmap": heatmap_base64,
             "agent_report": agent_report
