@@ -593,8 +593,9 @@
                                         Analysis</strong
                                     >
                                     <span
+                                        id="agentReportModelBadge"
                                         class="badge bg-primary ms-auto rounded-pill"
-                                        >Gemini 2.5 Flash</span
+                                        >AI Model</span
                                     >
                                 </div>
                                 <hr
@@ -781,6 +782,8 @@
                 document.getElementById('agentReportContainer').style.display =
                     'none';
                 document.getElementById('agentReportText').textContent = '---';
+                document.getElementById('agentReportModelBadge').textContent =
+                    'AI Model';
 
                 if (myChart) {
                     myChart.destroy();
@@ -897,6 +900,9 @@
                 if (data.agent_report) {
                     document.getElementById('agentReportText').textContent =
                         data.agent_report;
+                    document.getElementById(
+                        'agentReportModelBadge',
+                    ).textContent = data.agent_report_model || 'AI Model';
                     document.getElementById(
                         'agentReportContainer',
                     ).style.display = 'block';
