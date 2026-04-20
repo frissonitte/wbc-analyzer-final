@@ -6,16 +6,23 @@ This repository contains the English project documentation. The Turkish version 
 
 ## Overview
 
-An end-to-end deep learning system for automated white blood cell classification from peripheral blood smear images. The project uses a custom DenseNet121 architecture, CBAM attention blocks, Grad-CAM explainability, and a Gemini-based reporting workflow for XAI summaries.
+An end-to-end deep learning system for automated white blood cell classification from peripheral blood smear images. The project uses a custom DenseNet121 architecture, CBAM attention blocks, Grad-CAM explainability, and an LLM reporting workflow for XAI summaries.
 
 ## Key Features
 
 - DenseNet121 + CBAM attention for WBC classification
 - Grad-CAM-based explainability with foreground-masked visualization
-- Gemini-powered agentic reporting for heatmap interpretation
+- Agentic reporting for heatmap interpretation:
+  Primary model: OpenAI GPT-4o (GitHub Models)
+  Secondary fallback: Gemini 2.5 Flash
 - Medical preprocessing pipeline with CLAHE, bilateral filtering, and selective sharpening
 - Custom loss and activation functions for imbalanced medical data
 - Flask web interface for drag-and-drop inference
+
+## LLM Reporting Order
+
+1. Primary: `openai/gpt-4o` via GitHub Models (`GITHUB_TOKEN`)
+2. Secondary fallback: `gemini-2.5-flash` (`GEMINI_API_KEY`)
 
 ## Model Access
 
@@ -31,10 +38,11 @@ cd wbc-final
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with your Gemini API key:
+Create a `.env` file with your model keys:
 
 ```env
-GEMINI_API_KEY=your_key_here
+GITHUB_TOKEN=your_github_models_token
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 Run the web app:

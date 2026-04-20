@@ -6,16 +6,23 @@ Bu dosya projenin Türkçe dokümantasyonudur. İngilizce ana sürüm için [REA
 
 ## Genel Bakış
 
-Periferik yayma görüntülerinden beyaz kan hücresi sınıflandırması yapan uçtan uca bir derin öğrenme sistemi. Proje; özel bir DenseNet121 mimarisi, CBAM attention blokları, Grad-CAM açıklanabilirliği ve XAI özetleri üreten Gemini tabanlı raporlama akışı kullanır.
+Periferik yayma görüntülerinden beyaz kan hücresi sınıflandırması yapan uçtan uca bir derin öğrenme sistemi. Proje; özel bir DenseNet121 mimarisi, CBAM attention blokları, Grad-CAM açıklanabilirliği ve XAI özetleri üreten LLM tabanlı raporlama akışı kullanır.
 
 ## Temel Özellikler
 
 - WBC sınıflandırması için DenseNet121 + CBAM attention
 - Ön plan maskesi ile güçlendirilmiş Grad-CAM açıklanabilirlik
-- Isı haritası yorumlayan Gemini tabanlı agentic raporlama
+- Isı haritası yorumlayan agentic raporlama:
+  Ana model: OpenAI GPT-4o (GitHub Models)
+  İkinci model (fallback): Gemini 2.5 Flash
 - CLAHE, bilateral filtering ve seçici sharpen içeren medikal ön işleme
 - Dengesiz medikal veri için özel loss ve aktivasyon fonksiyonları
 - Sürükle-bırak inference için Flask web arayüzü
+
+## LLM Raporlama Sırası
+
+1. Ana model: `openai/gpt-4o` (GitHub Models, `GITHUB_TOKEN`)
+2. İkinci model (fallback): `gemini-2.5-flash` (`GEMINI_API_KEY`)
 
 ## Model Erişimi
 
@@ -31,10 +38,11 @@ cd wbc-final
 pip install -r requirements.txt
 ```
 
-`.env` dosyasına Gemini API anahtarınızı ekleyin:
+`.env` dosyasına model anahtarlarınızı ekleyin:
 
 ```env
-GEMINI_API_KEY=your_key_here
+GITHUB_TOKEN=your_github_models_token
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 Uygulamayı çalıştırın:
