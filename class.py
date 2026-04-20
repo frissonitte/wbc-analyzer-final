@@ -24,89 +24,92 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 def parse_args():
+    """Parse CLI options for evaluation and report generation."""
     parser = argparse.ArgumentParser(
-        description="TestA ve TestB klasorleri icin classification report ve confusion matrix uretir."
+        description="Generates classification reports and confusion matrices for the TestA and TestB splits."
     )
     parser.add_argument(
         "--data-root",
         default="data/raabin-wbc-data",
-        help="TestA ve TestB klasorlerini iceren ana dizin.",
+        help="Root directory containing the TestA and TestB folders.",
     )
     parser.add_argument(
         "--model-path",
         default="data/models/wbc_final_model_densenet.keras",
-        help="Keras model dosya yolu. Verilmezse yaygin konumlar otomatik denenir.",
+        help="Path to the Keras model file. Common locations are tried automatically if omitted.",
     )
     parser.add_argument(
         "--output-dir",
         default="outputs/final",
-        help="Rapor ve gorsellerin kaydedilecegi dizin.",
+        help="Directory where reports and visualizations will be saved.",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=32,
-        help="Inference batch boyutu.",
+        help="Inference batch size.",
     )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Hizli test icin her split'te islenecek maksimum goruntu sayisi.",
+        help="Maximum number of images to process per split for a quick test run.",
     )
     parser.add_argument(
         "--tta",
         choices=["none", "light"],
         default="light",
-        help="Test-time augmentation modu. 'light' modunda flip/rotasyon/parlaklik ortalamasi uygulanir.",
+        help="Test-time augmentation mode. 'light' applies flip, rotation, and brightness averaging.",
     )
     parser.add_argument(
         "--testb-binary-mode",
         choices=["none", "main", "aux"],
         default="main",
-        help="Sadece TestB icin 2 sinifa zorlayici tahmin modu: none=5-sinif, main=main_out icinden N/L sec, aux=aux cikisindan N/L sec.",
+        help="TestB-only binary forcing mode: none=5-class prediction, main=select N/L from main_out, aux=select N/L from aux output.",
     )
     parser.add_argument(
         "--color-normalization",
         choices=["none", "reinhard"],
         default="reinhard",
-        help="Inference oncesi renk normalizasyonu.",
+        help="Color normalization applied before inference.",
     )
     parser.add_argument(
         "--normalization-reference-split",
         default="Train",
-        help="Reinhard referans istatistiklerinin hesaplanacagi split klasoru.",
+        help="Split folder used to estimate the Reinhard reference statistics.",
     )
     parser.add_argument(
         "--normalization-reference-samples",
         type=int,
         default=1200,
-        help="Reinhard referansi icin kullanilacak maksimum goruntu sayisi.",
+        help="Maximum number of images used to estimate the Reinhard reference.",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Rastgelelik tohumu.",
+        help="Random seed.",
     )
     return parser.parse_args()
 
 
 def resolve_model_path(explicit_path=None):
+    """Resolve and validate the model path, using defaults when needed."""
     if explicit_path:
         candidate = Path(explicit_path)
         if candidate.exists():
             return candidate
-        raise FileNotFoundError(f"Model bulunamadi: {candidate}")
+        raise FileNotFoundError(f"Model not found: {candidate}")
 
     default_path = Path("data/models/wbc_final_model_densenet.keras")
     if default_path.exists():
         return default_path
 
-    raise FileNotFoundError(f"Model bulunamadi: {default_path}")
+    raise FileNotFoundError(f"Model not found: {default_path}")
 
 
 def load_trained_model(model_path):
+    """Load the trained Keras model with custom layer/loss registrations."""
     custom_objects = {
         "MedSwish": MedSwish,
         "WBCAttentionBlock": WBCAttentionBlock,
@@ -117,6 +120,7 @@ def load_trained_model(model_path):
 
 
 def extract_predictions(predictions):
+    """Extract main and optional auxiliary outputs from model prediction formats."""
     aux_predictions = None
 
     if isinstance(predictions, dict):
@@ -143,9 +147,10 @@ def extract_predictions(predictions):
 
 
 def estimate_reinhard_reference(data_root, split_name, image_size, max_samples, seed):
+    """Estimate dataset-level LAB statistics used for Reinhard normalization."""
     split_dir = Path(data_root) / split_name
     if not split_dir.exists():
-        print(f"Uyari: Reinhard referans split bulunamadi: {split_dir}")
+        print(f"Warning: Reinhard reference split not found: {split_dir}")
         return None, None
 
     image_paths = []
@@ -158,7 +163,7 @@ def estimate_reinhard_reference(data_root, split_name, image_size, max_samples, 
                 image_paths.append(image_path)
 
     if not image_paths:
-        print("Uyari: Reinhard referansi icin goruntu bulunamadi.")
+        print("Warning: no images were found for the Reinhard reference.")
         return None, None
 
     rng = np.random.default_rng(seed)
@@ -178,7 +183,7 @@ def estimate_reinhard_reference(data_root, split_name, image_size, max_samples, 
         stds.append(np.std(lab, axis=(0, 1)) + 1e-6)
 
     if not means:
-        print("Uyari: Reinhard referans istatistigi hesaplanamadi.")
+        print("Warning: could not compute Reinhard reference statistics.")
         return None, None
 
     target_mean = np.mean(np.array(means, dtype=np.float32), axis=0)
@@ -187,6 +192,7 @@ def estimate_reinhard_reference(data_root, split_name, image_size, max_samples, 
 
 
 def apply_reinhard_normalization(image, target_mean, target_std):
+    """Normalize image color distribution to target LAB mean/std statistics."""
     if target_mean is None or target_std is None:
         return image
 
@@ -201,9 +207,10 @@ def apply_reinhard_normalization(image, target_mean, target_std):
 
 
 def collect_samples(split_dir, limit=None):
+    """Collect image paths and class labels from a split directory."""
     split_path = Path(split_dir)
     if not split_path.exists():
-        raise FileNotFoundError(f"Split klasoru bulunamadi: {split_path}")
+        raise FileNotFoundError(f"Split directory not found: {split_path}")
 
     available_classes = [class_name for class_name in CLASS_NAMES if (split_path / class_name).exists()]
     unknown_dirs = [
@@ -211,10 +218,10 @@ def collect_samples(split_dir, limit=None):
     ]
 
     if unknown_dirs:
-        print(f"Uyari: taninmayan sinif klasorleri atlandi: {', '.join(sorted(unknown_dirs))}")
+        print(f"Warning: skipped unrecognized class folders: {', '.join(sorted(unknown_dirs))}")
 
     if not available_classes:
-        raise ValueError(f"Desteklenen sinif klasoru bulunamadi: {split_path}")
+        raise ValueError(f"No supported class folder was found in: {split_path}")
 
     samples = []
     for class_name in available_classes:
@@ -230,10 +237,11 @@ def collect_samples(split_dir, limit=None):
 
 
 def preprocess_image(image_path, color_normalization, target_lab_mean, target_lab_std):
+    """Load, resize, normalize, and enhance a single image for inference."""
     try:
         image = Image.open(image_path).convert("RGB")
     except UnidentifiedImageError as exc:
-        raise ValueError(f"Goruntu okunamadi: {image_path}") from exc
+        raise ValueError(f"Image could not be read: {image_path}") from exc
 
     image_np = np.array(image)
     image_np = cv2.resize(image_np, (224, 224))
@@ -243,6 +251,7 @@ def preprocess_image(image_path, color_normalization, target_lab_mean, target_la
 
 
 def build_tta_batch(image):
+    """Create a deterministic light-TTA batch for robust inference averaging."""
     # Keep TTA deterministic for reproducible evaluation.
     augmented = [
         image,
@@ -258,6 +267,7 @@ def build_tta_batch(image):
 
 
 def infer_main_and_aux(model, batch_images, tta_mode):
+    """Run inference with optional TTA and aggregate main/aux outputs."""
     if tta_mode == "none":
         predictions = model.predict(np.array(batch_images, dtype=np.float32), verbose=0)
         return extract_predictions(predictions)
@@ -267,6 +277,7 @@ def infer_main_and_aux(model, batch_images, tta_mode):
     aux_found = False
 
     for image in batch_images:
+        # Predict all deterministic TTA variants and average to reduce variance.
         tta_batch = build_tta_batch(image)
         predictions = model.predict(tta_batch, verbose=0)
         main_predictions, aux_predictions = extract_predictions(predictions)
@@ -284,6 +295,7 @@ def infer_main_and_aux(model, batch_images, tta_mode):
 
 
 def apply_testb_binary_mode(main_predictions, aux_predictions, mode):
+    """Apply TestB-specific binary routing strategy on top of multi-class outputs."""
     lymphocyte_idx = CLASS_NAMES.index("Lymphocyte")
     neutrophil_idx = CLASS_NAMES.index("Neutrophil")
 
@@ -292,6 +304,7 @@ def apply_testb_binary_mode(main_predictions, aux_predictions, mode):
         return predicted_indices, main_predictions
 
     if mode == "main":
+        # Restrict TestB decision to Lymphocyte vs Neutrophil using main head scores.
         binary_probs = main_predictions[:, [lymphocyte_idx, neutrophil_idx]]
         denom = np.sum(binary_probs, axis=1, keepdims=True) + 1e-8
         binary_probs = binary_probs / denom
@@ -304,9 +317,10 @@ def apply_testb_binary_mode(main_predictions, aux_predictions, mode):
         return predicted_indices, adjusted_probs
 
     if aux_predictions is None:
-        print("Uyari: aux_binary_out bulunamadi, testb-binary-mode=aux modu main moduna dusuruldu.")
+        print("Warning: aux_binary_out not found; testb-binary-mode=aux fell back to main mode.")
         return apply_testb_binary_mode(main_predictions, aux_predictions, mode="main")
 
+    # Use auxiliary sigmoid as a direct Neutrophil-vs-Lymphocyte probability.
     aux_probs = np.clip(aux_predictions.astype(np.float32), 0.0, 1.0)
     predicted_indices = np.where(aux_probs >= 0.5, neutrophil_idx, lymphocyte_idx)
 
@@ -327,6 +341,7 @@ def predict_samples(
     target_lab_mean,
     target_lab_std,
 ):
+    """Predict a split in mini-batches and return labels, probabilities, and paths."""
     label_to_index = {name: idx for idx, name in enumerate(CLASS_NAMES)}
     y_true = []
     y_pred = []
@@ -352,7 +367,7 @@ def predict_samples(
                 batch_true.append(label_to_index[class_name])
                 batch_paths.append(str(image_path))
             except ValueError as exc:
-                print(f"Uyari: {exc}")
+                print(f"Warning: {exc}")
 
         if not batch_images:
             continue
@@ -375,6 +390,7 @@ def predict_samples(
 
 
 def compute_confusion_matrix(y_true, y_pred):
+    """Compute confusion matrix counts for fixed class order in CLASS_NAMES."""
     matrix = np.zeros((len(CLASS_NAMES), len(CLASS_NAMES)), dtype=int)
     for true_idx, pred_idx in zip(y_true, y_pred):
         matrix[true_idx, pred_idx] += 1
@@ -382,6 +398,7 @@ def compute_confusion_matrix(y_true, y_pred):
 
 
 def build_classification_report(y_true, y_pred):
+    """Build a text classification report plus the underlying confusion matrix."""
     matrix = compute_confusion_matrix(y_true, y_pred)
     supports = matrix.sum(axis=1)
     total = int(supports.sum())
@@ -442,6 +459,7 @@ def build_classification_report(y_true, y_pred):
 
 
 def save_confusion_matrix(y_true, y_pred, output_path, title):
+    """Render and save confusion matrix heatmap as an image file."""
     matrix = compute_confusion_matrix(y_true, y_pred)
 
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -453,8 +471,8 @@ def save_confusion_matrix(y_true, y_pred, output_path, title):
         yticks=np.arange(len(CLASS_NAMES)),
         xticklabels=CLASS_NAMES,
         yticklabels=CLASS_NAMES,
-        xlabel="Tahmin",
-        ylabel="Gercek",
+        xlabel="Predicted",
+        ylabel="True",
         title=title,
     )
     plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
@@ -478,6 +496,7 @@ def save_confusion_matrix(y_true, y_pred, output_path, title):
 
 
 def save_predictions_csv(output_path, file_paths, y_true, y_pred, probabilities):
+    """Save per-file predictions and class probabilities as CSV."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
         header = ["file_path", "true_label", "pred_label"] + [
@@ -507,12 +526,13 @@ def evaluate_split(
     target_lab_std,
     limit=None,
 ):
+    """Evaluate one split, write report artifacts, and return raw prediction data."""
     samples = collect_samples(split_dir, limit=limit)
     if not samples:
-        print(f"{split_name}: islenecek goruntu bulunamadi.")
+        print(f"{split_name}: no images to process.")
         return None
 
-    print(f"{split_name}: {len(samples)} goruntu isleniyor...")
+    print(f"{split_name}: processing {len(samples)} images...")
     y_true, y_pred, probabilities, file_paths = predict_samples(
         model,
         samples,
@@ -546,7 +566,7 @@ def evaluate_split(
 
     print(f"\n===== {split_name} =====")
     print(report_text)
-    print(f"Rapor: {report_path}")
+    print(f"Report: {report_path}")
     print(f"CSV: {csv_path}")
     print(f"Matrix: {matrix_path}\n")
 
@@ -559,6 +579,7 @@ def evaluate_split(
 
 
 def evaluate_combined(results, output_dir):
+    """Merge split outputs and write a combined report and confusion matrix."""
     combined_true = []
     combined_pred = []
     combined_probs = []
@@ -596,12 +617,13 @@ def evaluate_combined(results, output_dir):
 
     print("\n===== COMBINED =====")
     print(report_text)
-    print(f"Rapor: {report_path}")
+    print(f"Report: {report_path}")
     print(f"CSV: {csv_path}")
     print(f"Matrix: {matrix_path}\n")
 
 
 def main():
+    """Run end-to-end evaluation for TestA, TestB, and combined outputs."""
     args = parse_args()
 
     model_path = resolve_model_path(args.model_path)
@@ -609,8 +631,8 @@ def main():
     output_dir = Path(args.output_dir)
 
     print(f"Model: {model_path}")
-    print(f"Veri klasoru: {data_root}")
-    print(f"Cikti klasoru: {output_dir}")
+    print(f"Data root: {data_root}")
+    print(f"Output directory: {output_dir}")
     print(f"TTA: {args.tta}")
     print(f"TestB binary mode: {args.testb_binary_mode}")
     print(f"Color normalization: {args.color_normalization}")
@@ -628,7 +650,7 @@ def main():
             seed=args.seed,
         )
         if target_lab_mean is None or target_lab_std is None:
-            print("Uyari: Reinhard referansi hesaplanamadi, color-normalization=none olarak devam ediliyor.")
+            print("Warning: Reinhard reference could not be estimated; continuing with color-normalization=none.")
             args.color_normalization = "none"
         else:
             print(

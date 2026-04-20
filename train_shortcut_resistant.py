@@ -21,6 +21,7 @@ AUX_OUTPUT_NAME = "aux_binary_out"
 
 
 def parse_args():
+    """Parse CLI arguments for shortcut-resistant training configuration."""
     parser = argparse.ArgumentParser(
         description="Train WBC model with shortcut-resistant pipeline (foreground crop + bg randomization + XAI focus monitor)."
     )
@@ -58,6 +59,7 @@ def parse_args():
 
 
 def parse_class_weights(raw_value, expected_count):
+    """Parse and validate comma-separated class weights for focal loss."""
     try:
         weights = [float(x.strip()) for x in raw_value.split(",") if x.strip()]
     except ValueError as exc:
@@ -72,6 +74,7 @@ def parse_class_weights(raw_value, expected_count):
 
 
 def build_main_head_loss(args, class_weights):
+    """Create the configured main-head loss object."""
     if args.main_loss == "focal":
         return WBCFocalLoss(class_weights=class_weights)
 
@@ -80,6 +83,7 @@ def build_main_head_loss(args, class_weights):
 
 
 def get_main_output_tensor(model):
+    """Return the main output tensor from single- or multi-output models."""
     if not isinstance(model.output, (list, tuple)):
         return model.output
 
@@ -92,6 +96,7 @@ def get_main_output_tensor(model):
 
 
 def extract_main_predictions(predictions):
+    """Extract main prediction array from dict/list/tensor model outputs."""
     if isinstance(predictions, dict):
         if MAIN_OUTPUT_NAME in predictions:
             main_predictions = predictions[MAIN_OUTPUT_NAME]
@@ -106,12 +111,14 @@ def extract_main_predictions(predictions):
 
 
 def set_global_seed(seed):
+    """Set Python, NumPy, and TensorFlow seeds for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
 
 def list_class_names(train_dir):
+    """List and sort class folder names under the training directory."""
     names = [p.name for p in Path(train_dir).iterdir() if p.is_dir()]
     if not names:
         raise ValueError(f"No class directories found in: {train_dir}")
@@ -119,6 +126,7 @@ def list_class_names(train_dir):
 
 
 def collect_samples(train_dir, class_names):
+    """Collect all image samples as (path, class_index) tuples."""
     samples = []
     for class_index, class_name in enumerate(class_names):
         class_dir = Path(train_dir) / class_name
@@ -133,6 +141,7 @@ def collect_samples(train_dir, class_names):
 
 
 def split_train_val(samples, num_classes, val_fraction, seed):
+    """Build stratified-like train/validation split with per-class safety checks."""
     rng = np.random.default_rng(seed)
     samples_by_class = [[] for _ in range(num_classes)]
     for path, label in samples:
@@ -160,6 +169,7 @@ def split_train_val(samples, num_classes, val_fraction, seed):
 
 
 def load_rgb_image(image_path, image_size):
+    """Load image from disk, convert BGR->RGB, and resize to model input size."""
     image = cv2.imread(image_path)
     if image is None:
         return None
@@ -169,6 +179,7 @@ def load_rgb_image(image_path, image_size):
 
 
 def estimate_reinhard_reference(samples, image_size, seed, max_samples):
+    """Estimate LAB channel statistics from sampled train images."""
     rng = np.random.default_rng(seed)
 
     all_paths = [path for path, _ in samples]
@@ -203,6 +214,7 @@ def estimate_reinhard_reference(samples, image_size, seed, max_samples):
 
 
 def apply_reinhard_normalization(image, target_mean, target_std):
+    """Map source LAB distribution to target LAB mean/std."""
     if target_mean is None or target_std is None:
         return image
 
@@ -218,6 +230,7 @@ def apply_reinhard_normalization(image, target_mean, target_std):
 
 
 def crop_to_foreground(image, mask, rng):
+    """Crop around estimated foreground with random jitter and resize back."""
     binary = mask > 0.2
     if not np.any(binary):
         return image
@@ -249,6 +262,7 @@ def crop_to_foreground(image, mask, rng):
 
 
 def apply_stain_jitter(image, rng, prob):
+    """Apply mild LAB-space jitter to emulate stain/capture variance."""
     if float(rng.random()) > prob:
         return image
 
@@ -266,6 +280,7 @@ def apply_stain_jitter(image, rng, prob):
 
 
 def randomize_background(image, mask, rng, prob, strength):
+    """Perturb non-foreground regions to discourage background shortcuts."""
     if float(rng.random()) > prob:
         return image
 
@@ -312,6 +327,7 @@ def preprocess_for_training(
     neutrophil_aug_scale,
     lymphocyte_aug_scale,
 ):
+    # Keep eval and training color-space aligned before stochastic augmentations.
     if color_normalization == "reinhard":
         image = apply_reinhard_normalization(image, target_lab_mean, target_lab_std)
 
@@ -327,6 +343,7 @@ def preprocess_for_training(
 
     mask = PreprocessingFilters.estimate_foreground_mask(image)
 
+    # Foreground crop is class-scaled to reduce shortcut learning asymmetrically.
     if float(rng.random()) < class_crop_prob:
         image = crop_to_foreground(image, mask, rng)
         mask = PreprocessingFilters.estimate_foreground_mask(image)
@@ -341,10 +358,12 @@ def preprocess_for_training(
         strength=bg_randomization_strength,
     )
 
+    # Final shared enhancement keeps training input distribution close to inference.
     return PreprocessingFilters.medical_enhanced(image)
 
 
 def preprocess_for_eval(image, color_normalization, target_lab_mean, target_lab_std):
+    """Deterministic preprocessing path used in validation and XAI checks."""
     if color_normalization == "reinhard":
         image = apply_reinhard_normalization(image, target_lab_mean, target_lab_std)
 
@@ -352,6 +371,7 @@ def preprocess_for_eval(image, color_normalization, target_lab_mean, target_lab_
 
 
 class WBCSequence(keras.utils.Sequence):
+    """Keras Sequence that serves augmented training and deterministic eval batches."""
     def __init__(
         self,
         samples,
@@ -397,13 +417,16 @@ class WBCSequence(keras.utils.Sequence):
         self.on_epoch_end()
 
     def __len__(self):
+        """Return number of batches per epoch."""
         return math.ceil(len(self.samples) / self.batch_size)
 
     def on_epoch_end(self):
+        """Shuffle sample order between epochs during training."""
         if self.training:
             self.rng.shuffle(self.indices)
 
     def __getitem__(self, index):
+        """Build one batch of images and labels (plus aux/sample weights when enabled)."""
         start = index * self.batch_size
         end = min((index + 1) * self.batch_size, len(self.indices))
         batch_indices = self.indices[start:end]
@@ -457,6 +480,7 @@ class WBCSequence(keras.utils.Sequence):
         aux_sample_weight = np.zeros((len(labels),), dtype=np.float32)
         main_sample_weight = np.ones((len(labels),), dtype=np.float32)
 
+        # Only designated classes contribute to the auxiliary binary loss.
         for idx, class_index in enumerate(labels):
             if class_index == self.aux_positive_index:
                 y_aux[idx, 0] = 1.0
@@ -471,6 +495,7 @@ class WBCSequence(keras.utils.Sequence):
 
 
 def build_model(num_classes, image_size, enable_aux_binary_head):
+    """Build DenseNet121 backbone with attention block and optional auxiliary head."""
     inputs = layers.Input(shape=(image_size, image_size, 3))
 
     x = layers.RandomRotation(0.2)(inputs)
@@ -522,6 +547,7 @@ def build_model(num_classes, image_size, enable_aux_binary_head):
 
 
 def get_last_conv_layer_name(model):
+    """Find the deepest valid Conv2D layer for Grad-CAM."""
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Conv2D):
             shape = layer.output.shape
@@ -532,6 +558,7 @@ def get_last_conv_layer_name(model):
 
 
 def make_gradcam_heatmap(img_batch, model, last_conv_layer_name, pred_index):
+    """Compute Guided Grad-CAM heatmap for one input batch and class index."""
     try:
         target_layer = model.get_layer(last_conv_layer_name)
     except ValueError:
@@ -579,6 +606,7 @@ def compute_xai_focus_ratio(
     target_lab_mean,
     target_lab_std,
 ):
+    """Measure what fraction of Grad-CAM energy lies on estimated foreground."""
     ratios = []
 
     for image_path in sample_paths:
@@ -616,6 +644,7 @@ def compute_xai_focus_ratio(
 
 
 class XAIFocusMonitor(keras.callbacks.Callback):
+    """Callback that monitors foreground focus ratio and can trigger early stop."""
     def __init__(
         self,
         sample_paths,
@@ -640,11 +669,13 @@ class XAIFocusMonitor(keras.callbacks.Callback):
         self.last_conv_layer_name = None
 
     def on_train_begin(self, logs=None):
+        """Resolve target conv layer before training starts."""
         self.last_conv_layer_name = get_last_conv_layer_name(self.model)
         if self.last_conv_layer_name is None:
             print("[XAI] Warning: no valid Conv2D layer found. Focus monitoring disabled.")
 
     def on_epoch_end(self, epoch, logs=None):
+        """Periodically compute XAI focus metrics and update early-stop state."""
         if self.last_conv_layer_name is None:
             return
 
@@ -687,6 +718,7 @@ class XAIFocusMonitor(keras.callbacks.Callback):
 
 
 def plot_history(history_phase1, history_phase2, output_path):
+    """Plot two-phase training curves into a single artifact image."""
     phase1_acc = history_phase1.history.get("main_out_accuracy", history_phase1.history.get("accuracy", []))
     phase2_acc = history_phase2.history.get("main_out_accuracy", history_phase2.history.get("accuracy", []))
     acc = phase1_acc + phase2_acc
@@ -719,6 +751,7 @@ def plot_history(history_phase1, history_phase2, output_path):
 
 
 def write_split_summary(summary_path, class_names, train_samples, val_samples):
+    """Write class-wise train/validation counts as CSV."""
     train_counts = {name: 0 for name in class_names}
     val_counts = {name: 0 for name in class_names}
 
@@ -735,6 +768,7 @@ def write_split_summary(summary_path, class_names, train_samples, val_samples):
 
 
 def main():
+    """Run the full shortcut-resistant training pipeline."""
     args = parse_args()
     set_global_seed(args.seed)
 

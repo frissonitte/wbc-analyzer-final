@@ -26,6 +26,7 @@ from src.custom_losses import WBCFocalLoss
 from src.preprocessing import PreprocessingFilters
 
 try:
+    # Mixed precision is optional; if unavailable, run with default precision.
     mixed_precision.set_global_policy("mixed_float16")
 except:
     pass
@@ -34,6 +35,7 @@ app = Flask(__name__)
 
 
 def get_main_output_tensor(model):
+    """Return the primary output tensor from single- or multi-output models."""
     if not isinstance(model.output, (list, tuple)):
         return model.output
 
@@ -46,6 +48,7 @@ def get_main_output_tensor(model):
 
 
 def extract_main_predictions(predictions):
+    """Extract the main prediction array from dict/list/tensor model outputs."""
     if isinstance(predictions, dict):
         if "main_out" in predictions:
             main_predictions = predictions["main_out"]
@@ -79,15 +82,16 @@ def find_available_port(host, preferred_port, max_attempts=20):
                     raise
 
     raise RuntimeError(
-        f"{preferred_port}-{preferred_port + max_attempts - 1} araliginda uygun port bulunamadi."
+        f"No available port was found in the range {preferred_port}-{preferred_port + max_attempts - 1}."
     )
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    """Compute normalized Guided Grad-CAM heatmap for the selected class index."""
 
     try:
         last_conv_layer = model.get_layer(last_conv_layer_name)
     except ValueError:
-        print(f"HATA: '{last_conv_layer_name}' katmani modelde bulunamadi!")
+        print(f"ERROR: layer '{last_conv_layer_name}' was not found in the model!")
         return None
 
     try:
@@ -97,7 +101,7 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
             outputs=[last_conv_layer.output, main_output_tensor],
         )
     except Exception as e:
-        print(f"HATA: Gradient modeli olusturulamadi: {e}")
+        print(f"ERROR: could not build the gradient model: {e}")
         traceback.print_exc()
         return None
 
@@ -114,13 +118,13 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
 
     grads = tape.gradient(class_channel, conv_outputs)
     if grads is None:
-        print("HATA: Grad-CAM gradient uretilemedi.")
+        print("ERROR: Grad-CAM gradients could not be computed.")
         return None
 
     conv_outputs = tf.cast(conv_outputs[0], tf.float32)
     grads = tf.cast(grads[0], tf.float32)
 
-    # Guided Grad-CAM: negatif aktivasyon/gradient etkisini baskilar.
+    # Guided Grad-CAM suppresses negative activation and gradient effects.
     guided_grads = (
         tf.cast(conv_outputs > 0, tf.float32)
         * tf.cast(grads > 0, tf.float32)
@@ -138,25 +142,26 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     return heatmap.numpy().astype(np.float32)
 
 def generate_agent_report(predicted_class, confidence, heatmap_img_array):
+    """Generate a concise LLM-based interpretation report from XAI overlay image."""
     try:
         load_dotenv()
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         
         system_instruction = """
-        Sen periferik yayma analizinde uzman bir yapay zeka hematoloğusun. 
-        Sana bir kan hücresinin XAI (Açıklanabilir Yapay Zeka) Grad-CAM ısı haritası ve modelin tahmin sonuçları verilecek. 
-        Resimdeki KIRMIZI ALANLAR, modelin karar verirken en çok odaklandığı hücre yapılarıdır.
-        Görevlerin:
-        1. Modelin tahminini ve güven skorunu belirt.
-        2. Kırmızı alanların (odak noktalarının) hücrenin neresine (örn: çekirdek, sitoplazma, hücre zarı) denk geldiğini yorumla.
-        3. Modelin odaklandığı yerin tıbbi olarak mantıklı olup olmadığını kısaca değerlendir.
-        Raporun profesyonel, nesnel ve en fazla 3-4 cümle olmalıdır. Kesin teşhis koyma.
+        You are an AI hematologist specialized in peripheral smear analysis.
+        You will receive an XAI Grad-CAM heatmap for a blood cell together with the model prediction.
+        The RED AREAS in the image indicate the cell structures that the model focused on most while making its decision.
+        Your tasks:
+        1. State the model prediction and confidence score.
+        2. Interpret which part of the cell the red areas correspond to, such as the nucleus, cytoplasm, or cell membrane.
+        3. Briefly evaluate whether the model's focus is medically plausible.
+        The report must be professional, objective, and no longer than 3 to 4 sentences. Do not provide a definitive diagnosis.
         """
 
         img_rgb = cv2.cvtColor(heatmap_img_array, cv2.COLOR_BGR2RGB)
         pil_image = PIL.Image.fromarray(img_rgb)
         
-        prompt = f"Model bu hücrenin %{confidence * 100:.1f} ihtimalle {predicted_class} olduğunu tahmin etti. Lütfen ekteki ısı haritasını inceleyerek tıbbi bir ön rapor yaz."
+        prompt = f"The model predicted with {confidence * 100:.1f}% confidence that this cell is {predicted_class}. Please review the attached heatmap and write a brief medical preliminary report."
         
         response = client.models.generate_content(
             model='gemini-2.5-flash',
@@ -168,12 +173,12 @@ def generate_agent_report(predicted_class, confidence, heatmap_img_array):
         )
         return response.text
     except Exception as e:
-        print(f"Ajan Hatası: {e}")
-        return "Yapay Zeka Raporu şu an oluşturulamadı. Lütfen model sonuçlarını manuel inceleyiniz."
+        print(f"Agent error: {e}")
+        return "The AI report could not be generated right now. Please review the model output manually."
 
 def get_last_conv_layer(model):
     """
-    Grad-CAM için en uygun katmanı bulur.
+    Find the most suitable layer for Grad-CAM.
     """
 
     for layer in reversed(model.layers):
@@ -188,12 +193,12 @@ def get_last_conv_layer(model):
 
             h, w = shape[1], shape[2]
             if h is not None and w is not None and h > 1 and w > 1:
-                print(f"DEBUG: Grad-CAM katmani secildi: '{layer.name}', shape: {shape}")
+                print(f"DEBUG: selected Grad-CAM layer: '{layer.name}', shape: {shape}")
                 return layer.name
         except Exception:
             continue
 
-    print("DEBUG: Uygun bir Conv2D katmani bulunamadi.")
+    print("DEBUG: no suitable Conv2D layer was found.")
     return None
 
 custom_objects = {
@@ -212,10 +217,11 @@ if not os.path.exists(MODEL_PATH):
 try:
     model = tf.keras.models.load_model(MODEL_PATH, custom_objects=custom_objects)
     print(f"Model loaded from: {MODEL_PATH}")
-    print("Model ısınma turu (Warm-up) başlatılıyor")
+    # Warm-up avoids first-request latency spikes in production-like usage.
+    print("Starting model warm-up pass.")
     dummy_input = np.zeros((1, 224, 224, 3), dtype=np.float32)
     _ = model.predict(dummy_input, verbose=0)
-    print("Model ısındı ve kullanıma hazır")
+    print("Model warmed up and ready to use.")
 except Exception as e:
     print(f"ERROR loading model: {e}")
     model = None
@@ -223,16 +229,17 @@ except Exception as e:
 class_names = ["Basophil", "Eosinophil", "Lymphocyte", "Monocyte", "Neutrophil"]
 
 class_descriptions = {
-    "Basophil": "Bazofiller, inflamatuar reaksiyonlarda (özellikle alerjik) histamin salgılayan granülositlerdir. Periferik yaymada nadir görülürler (<%1).",
-    "Eosinophil": "Eozinofiller, parazitik enfeksiyonlara karşı savunma ve alerjik yanıt modülasyonunda görev alır. Sitoplazmalarında turuncu-kırmızı granüller karakteristiktir.",
-    "Lymphocyte": "Lenfositler (T, B, NK), adaptif bağışıklık sisteminin merkezidir. Viral enfeksiyonlarda sayıları artış gösterir. Çekirdekleri genellikle yuvarlak ve koyu boyanır.",
-    "Monocyte": "Monositler, dokulara geçerek makrofajlara dönüşen ve fagositoz yapan büyük lökositlerdir. Çekirdekleri genellikle böbrek veya at nalı şeklindedir.",
-    "Neutrophil": "Nötrofiller, bakteriyel enfeksiyonlara karşı ilk savunma hattını oluşturan en yaygın lökosit türüdür (%40-70). Çok loblu çekirdek yapısına sahiptirler.",
+    "Basophil": "Basophils are granulocytes that release histamine in inflammatory reactions (especially allergic). They are rarely seen in peripheral blood smears (<1%).",
+    "Eosinophil": "Eosinophils are involved in defense against parasitic infections and modulation of allergic responses. Orange-red granules are characteristic of their cytoplasm.",
+    "Lymphocyte": "Lymphocytes (T, B, NK) are central to the adaptive immune system. Their numbers increase in viral infections. Their nuclei are usually round and darkly stained.",
+    "Monocyte": "Monocytes are large leukocytes that migrate to tissues, transform into macrophages, and perform phagocytosis. Their nuclei are usually kidney-shaped or horseshoe-shaped.",
+    "Neutrophil": "Neutrophils are the most common type of leukocyte (40-70%), forming the first line of defense against bacterial infections. They have a multilobed nucleus.",
 }
 
 
 @app.route("/")
 def home():
+    """Serve the single-page web UI."""
     return render_template("index.html")
 
 
@@ -242,13 +249,14 @@ ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/bmp"}
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    """Run preprocessing, model inference, Grad-CAM generation, and report synthesis."""
     app.logger.info(f"New prediction request from: {request.remote_addr}")
 
     if model is None:
-        return jsonify({"error": "Sistem şu an bakımda (Model Yüklenemedi)."}), 500
+        return jsonify({"error": "The system is currently under maintenance (model could not be loaded)."}), 500
 
     if "file" not in request.files:
-        return jsonify({"error": "Dosya bulunamadı."}), 400
+        return jsonify({"error": "No file was found."}), 400
 
     file = request.files["file"]
 
@@ -256,7 +264,7 @@ def predict():
         return (
             jsonify(
                 {
-                    "error": "Desteklenmeyen dosya formatı. Lütfen JPEG veya PNG kullanın."
+                    "error": "Unsupported file format. Please use JPEG or PNG."
                 }
             ),
             415,
@@ -273,52 +281,53 @@ def predict():
             img_batch = np.expand_dims(img_processed, axis=0)
 
         except UnidentifiedImageError:
-            return jsonify({"error": "Görüntü dosyası bozuk veya okunamıyor."}), 400
+            return jsonify({"error": "The image file is corrupted or unreadable."}), 400
 
         predictions = extract_main_predictions(model.predict(img_batch, verbose=0))
         predicted_index = np.argmax(predictions[0])
         predicted_class = class_names[predicted_index]
         confidence = float(predictions[0][predicted_index])
 
+        # Keep all class probabilities for chart rendering on the client.
         all_probs = {
             class_names[i]: float(predictions[0][i]) for i in range(len(class_names))
         }
 
-        app.logger.info(f"Tahmin: {predicted_class} ({confidence:.4f})")
+        app.logger.info(f"Prediction: {predicted_class} ({confidence:.4f})")
 
-        # ===== GRAD-CAM BÖLÜMÜ =====
+        # ===== GRAD-CAM SECTION =====
         heatmap_base64 = None
         heatmap = None
         superimposed_img = None
         try:
             last_conv_layer_name = get_last_conv_layer(model)
-            print(f"DEBUG: Grad-CAM katmanı: {last_conv_layer_name}")
+            print(f"DEBUG: Grad-CAM layer: {last_conv_layer_name}")
 
             if last_conv_layer_name:
                 heatmap = make_gradcam_heatmap(
                     img_batch, model, last_conv_layer_name, predicted_index
                 )
-                print(f"DEBUG: Heatmap sonucu: {type(heatmap)}, "
+                print(f"DEBUG: heatmap result: {type(heatmap)}, "
                       f"shape: {getattr(heatmap, 'shape', 'N/A')}")
 
                 if heatmap is not None and heatmap.size > 0:
                     heatmap = np.float32(heatmap)
                     heatmap = np.nan_to_num(heatmap)
                     
-                    # Boyut düzeltme
+                    # Fix heatmap dimensions when needed.
                     if heatmap.ndim < 2:
-                        print("DEBUG: Heatmap boyutu düşük, 7x7'ye reshape")
+                        print("DEBUG: heatmap dimension is too small; reshaping to 7x7.")
                         side = int(np.sqrt(heatmap.size))
                         if side * side == heatmap.size:
                             heatmap = heatmap.reshape(side, side)
                         else:
                             heatmap = np.zeros((7, 7), dtype=np.float32)
 
-                    # 224x224'e resize + yumusatma
+                    # Resize to 224x224 and smooth the heatmap.
                     heatmap_resized = cv2.resize(heatmap, (224, 224))
                     heatmap_resized = cv2.GaussianBlur(heatmap_resized, (0, 0), sigmaX=2.0)
 
-                    # Arka plani baskilamak icin yumuşak hucre maskesi uygula.
+                    # Apply a soft cell mask to suppress background influence.
                     original_resized = cv2.resize(np.array(pil_img), (224, 224))
                     foreground_mask = PreprocessingFilters.estimate_foreground_mask(original_resized)
                     heatmap_resized = heatmap_resized * (0.05 + 0.95 * foreground_mask)
@@ -327,7 +336,7 @@ def predict():
                     if max_heatmap > 0:
                         heatmap_resized = heatmap_resized / max_heatmap
 
-                    # Dusuk aktivasyonlari gosterme: yalnizca ust persentildeki alanlari vurgula.
+                    # Hide low activations and emphasize only the upper percentile regions.
                     heatmap_focus = np.power(np.clip(heatmap_resized, 0.0, 1.0), 1.6)
                     foreground_pixels = heatmap_focus[foreground_mask > 0.15]
                     if foreground_pixels.size > 50:
@@ -346,7 +355,7 @@ def predict():
                     heatmap_uint8 = np.uint8(255 * heatmap_resized)
                     heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
 
-                    # Orijinal görüntü ile overlay (süperimpoze)
+                    # Overlay the heatmap on top of the original image.
                     original_bgr = cv2.cvtColor(original_resized, cv2.COLOR_RGB2BGR)
 
                     mask_3ch = np.repeat(foreground_mask[:, :, np.newaxis], 3, axis=2)
@@ -354,36 +363,36 @@ def predict():
                         original_bgr.astype(np.float32) * (0.55 + 0.45 * mask_3ch)
                     ).astype(np.uint8)
 
-                    # Dinamik alfa ile yalnizca guclu XAI odaklarini boya.
+                    # Use dynamic alpha to paint only strong XAI focus regions.
                     alpha_3ch = np.repeat((0.78 * focus_alpha)[:, :, np.newaxis], 3, axis=2)
                     superimposed_img = (
                         visualization_base.astype(np.float32) * (1.0 - alpha_3ch)
                         + heatmap_colored.astype(np.float32) * alpha_3ch
                     ).astype(np.uint8)
 
-                    # Base64'e encode et
+                    # Encode the visualization as Base64.
                     _, buffer = cv2.imencode(
                         ".jpg", superimposed_img, [cv2.IMWRITE_JPEG_QUALITY, 90]
                     )
                     heatmap_base64 = base64.b64encode(buffer).decode("utf-8")
-                    print(f"DEBUG: Heatmap base64 uzunluğu: {len(heatmap_base64)}")
+                    print(f"DEBUG: heatmap Base64 length: {len(heatmap_base64)}")
                 else:
-                    print("DEBUG: Heatmap None veya boş!")
+                    print("DEBUG: heatmap is None or empty!")
             else:
-                print("DEBUG: Uygun Grad-CAM katmanı bulunamadı!")
+                print("DEBUG: no suitable Grad-CAM layer was found!")
                 
         except Exception as e:
-            print(f"DEBUG: Grad-CAM HATA: {e}")
+            print(f"DEBUG: Grad-CAM error: {e}")
             traceback.print_exc()
-        # ===== GRAD-CAM BÖLÜMÜ SONU =====
+        # ===== END GRAD-CAM SECTION =====
 
         agent_report = ""
         if superimposed_img is not None:
-            print("Ajan rapor yazıyor...")
+            print("Generating agent report...")
             agent_report = generate_agent_report(predicted_class, confidence, superimposed_img)
-            print("Ajan raporu tamamlandı!")
+            print("Agent report completed.")
         else:
-            agent_report = "Isı haritası oluşturulamadığı için detaylı analiz yapılamadı."
+            agent_report = "Detailed analysis could not be performed because the heatmap could not be generated."
 
         return jsonify({
             "predicted_class": predicted_class,
@@ -401,7 +410,7 @@ def predict():
 
     except Exception as e:
         app.logger.error(f"Error: {e}", exc_info=True)
-        return jsonify({"error": "Analiz sırasında bir sunucu hatası oluştu."}), 500
+        return jsonify({"error": "A server error occurred during analysis."}), 500
 
 
 if __name__ == "__main__":
@@ -414,7 +423,7 @@ if __name__ == "__main__":
     app.logger.addHandler(log_handler)
     app.logger.setLevel(logging.INFO)
 
-    print("WBC Analiz Sistemi Başlatılıyor...")
+    print("Starting WBC analysis system...")
     host = os.getenv("FLASK_HOST", "127.0.0.1")
     debug = os.getenv("FLASK_DEBUG", "1").strip().lower() in {"1", "true", "yes", "on"}
     use_reloader = (
@@ -430,8 +439,8 @@ if __name__ == "__main__":
 
     if port != preferred_port:
         print(
-            f"Port {preferred_port} kullanilamiyor. Sunucu otomatik olarak {port} portuna gececek."
+            f"Port {preferred_port} is unavailable. The server will automatically switch to port {port}."
         )
 
-    print(f"Sunucu http://{host}:{port} adresinde baslatiliyor")
+    print(f"Server starting at http://{host}:{port}")
     app.run(debug=debug, use_reloader=use_reloader, host=host, port=port)

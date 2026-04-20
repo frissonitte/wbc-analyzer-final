@@ -1,612 +1,957 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dijital Patoloji Asistanı</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        :root {
-            --medical-blue: #0ea5e9;
-            --medical-dark: #0f172a;
-            --medical-light: #f1f5f9;
-            --active-drop: #e0f2fe;
-        }
-        
-        body {
-            background-color: #f8fafc;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: var(--medical-dark);
-        }
-        
-        .main-container {
-            max-width: 950px;
-            margin: 40px auto;
-        }
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Digital Pathology Assistant</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+        />
+        <link
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+            rel="stylesheet"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            :root {
+                --medical-blue: #0ea5e9;
+                --medical-dark: #0f172a;
+                --medical-light: #f1f5f9;
+                --active-drop: #e0f2fe;
+            }
 
-        .brand-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .analysis-card {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-            border: 1px solid #e2e8f0;
-        }
+            body {
+                background-color: #f8fafc;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                color: var(--medical-dark);
+            }
 
-        .grid-layout {
-            display: grid;
-            grid-template-columns: 1fr;
-        }
-        
-        @media(min-width: 768px) {
+            .main-container {
+                max-width: 950px;
+                margin: 40px auto;
+            }
+
+            .brand-header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+
+            .analysis-card {
+                background: white;
+                border-radius: 16px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                overflow: hidden;
+                border: 1px solid #e2e8f0;
+            }
+
             .grid-layout {
-                grid-template-columns: 40% 60%;
-            }
-        }
-
-        .upload-section {
-            padding: 30px;
-            background: #f8fafc;
-            border-right: 1px solid #e2e8f0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 450px;
-        }
-
-        .drop-zone {
-            width: 100%;
-            height: 100%;
-            min-height: 250px;
-            border: 2px dashed #cbd5e1;
-            border-radius: 12px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.2s ease-in-out;
-            background: white;
-        }
-
-        .drop-zone:hover, .drop-zone.drag-active {
-            border-color: var(--medical-blue);
-            background-color: var(--active-drop);
-        }
-
-        .drop-zone i {
-            font-size: 3rem;
-            color: #94a3b8;
-            margin-bottom: 15px;
-            transition: color 0.2s;
-        }
-
-        .drop-zone:hover i, .drop-zone.drag-active i { color: var(--medical-blue); }
-
-        .preview-box {
-            display: none;
-            width: 100%;
-            max-width: 100%;
-            margin-bottom: 20px;
-            border-radius: 12px;
-            overflow: hidden;
-            border: 3px solid white;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-
-        .preview-img {
-            width: 100%;
-            height: auto;
-            display: block;
-            max-height: 300px;
-            object-fit: contain;
-            background-color: #000;
-        }
-
-        .results-section { padding: 30px; position: relative; }
-        .empty-state { text-align: center; color: #94a3b8; margin-top: 80px; }
-        .result-content { display: none; }
-
-        .diagnosis-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #f1f5f9;
-            padding-bottom: 15px;
-        }
-
-        .detected-class { font-size: 2rem; font-weight: 800; color: var(--medical-dark); line-height: 1.2; }
-
-        .confidence-badge {
-            font-size: 0.85rem; padding: 4px 12px; border-radius: 20px; font-weight: 600; white-space: nowrap;
-        }
-        .badge-high { background: #dcfce7; color: #166534; }
-        .badge-medium { background: #fef3c7; color: #92400e; }
-        .badge-low { background: #fee2e2; color: #991b1b; }
-
-        .btn-action {
-            width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: 600; transition: all 0.2s;
-        }
-        .btn-analyze { background: var(--medical-blue); color: white; }
-        .btn-analyze:hover { background: #0284c7; }
-        .btn-analyze:disabled { background: #cbd5e1; cursor: not-allowed; }
-        
-        .btn-reset { background: white; color: #64748b; border: 2px solid #e2e8f0; margin-top: 10px; }
-        .btn-reset:hover { background: #f1f5f9; color: var(--medical-dark); border-color: #cbd5e1; }
-
-        .loader { display: none; text-align: center; padding: 40px; }
-        .tech-specs { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-top: 20px; font-size: 0.85rem; }
-
-        /* ===== GRAD-CAM STİLLERİ ===== */
-        .gradcam-section {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            margin-top: 20px;
-            margin-bottom: 20px;
-        }
-
-        .gradcam-title {
-            font-size: 1rem;
-            font-weight: 700;
-            color: var(--medical-dark);
-            margin-bottom: 5px;
-        }
-
-        .gradcam-subtitle {
-            color: #64748b;
-            font-size: 0.8rem;
-            margin-bottom: 15px;
-        }
-
-        .gradcam-grid {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-
-        .gradcam-card {
-            text-align: center;
-        }
-
-        .gradcam-card p {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: #475569;
-            margin-bottom: 8px;
-        }
-
-        .gradcam-card img {
-            width: 200px;
-            height: 200px;
-            object-fit: contain;
-            border-radius: 8px;
-            background: #000;
-        }
-
-        .gradcam-card .img-original {
-            border: 2px solid #cbd5e1;
-        }
-
-        .gradcam-card .img-heatmap {
-            border: 2px solid #e74c3c;
-        }
-
-        .gradcam-legend {
-            margin-top: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-        }
-
-        .gradcam-legend span {
-            font-size: 0.75rem;
-            color: #64748b;
-        }
-
-        .gradcam-legend-bar {
-            width: 150px;
-            height: 12px;
-            border-radius: 6px;
-            background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
-        }
-
-        .upload-done-state {
-            text-align: center;
-            color: #64748b;
-            padding: 20px;
-        }
-
-        .upload-done-state i {
-            font-size: 3rem;
-            color: #22c55e;
-            margin-bottom: 15px;
-        }
-
-        @media print {
-            body * { visibility: hidden; }
-            .main-container, .analysis-card { margin: 0; padding: 0; box-shadow: none; border: none; max-width: 100%; }
-            .results-section, .results-section * { visibility: visible; }
-            .results-section { position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
-            .brand-header, .upload-section, .no-print, #emptyState, #loader, #errorState { 
-                display: none !important; 
-            }
-            .result-content::before {
-                content: "Hematoloji AI Asistanı - Analiz Raporu";
-                display: block; font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; color: var(--medical-blue);
-            }
-        }
-    </style>
-</head>
-<body>
-
-<div class="main-container">
-    <div class="brand-header no-print">
-        <h1><i class="fas fa-notes-medical text-primary me-2"></i>Dijital Patoloji Asistanı</h1>
-        <div class="text-muted">Yapay Zeka Destekli Periferik Yayma Analizi</div>
-    </div>
-
-    <div class="analysis-card">
-        <div class="grid-layout">
-            
-            <!-- SOL PANEL -->
-            <div class="upload-section no-print">
-                <div id="previewBox" class="preview-box">
-                    <img id="previewImg" class="preview-img" alt="Microscope View">
-                </div>
-                
-                <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-                    <i class="fas fa-cloud-upload-alt"></i>
-                    <h6 class="mb-1">Görüntüyü Buraya Sürükleyin</h6>
-                    <small class="text-muted">veya dosya seçmek için tıklayın</small>
-                    <input type="file" id="fileInput" accept="image/*" hidden onchange="handleFile(this.files[0])">
-                </div>
-
-                <div id="uploadDoneState" class="upload-done-state" style="display: none;">
-                    <i class="fas fa-check-circle"></i>
-                    <h6>Analiz Tamamlandı</h6>
-                    <p class="small">Sonuçlar sağ panelde görüntüleniyor.</p>
-                </div>
-
-                <div class="w-100 mt-3">
-                    <button class="btn-action btn-analyze" id="analyzeBtn" onclick="startAnalysis()" disabled>
-                        Analizi Başlat
-                    </button>
-                    <button class="btn-action btn-reset" id="resetBtn" onclick="resetUI()" style="display: none;">
-                        <i class="fas fa-redo me-2"></i>Yeni Analiz
-                    </button>
-                </div>
-            </div>
-
-            <!-- SAĞ PANEL -->
-            <div class="results-section">
-                
-                <div id="printContainer" class="position-absolute top-0 end-0 p-3 no-print" style="display: none; z-index: 10;">
-                    <button onclick="window.print()" class="btn btn-sm btn-outline-secondary bg-white">
-                        <i class="fas fa-print me-1"></i>Raporu Yazdır
-                    </button>
-                </div>
-
-                <div id="emptyState" class="empty-state">
-                    <i class="fas fa-microscope fa-3x mb-3 text-secondary"></i>
-                    <h5>Analiz Bekleniyor</h5>
-                    <p class="small">Lütfen sol taraftan bir hücre görüntüsü yükleyin.</p>
-                </div>
-
-                <div id="loader" class="loader">
-                    <div class="spinner-border text-primary" role="status"></div>
-                    <p class="mt-3 fw-bold text-primary">Görüntü İşleniyor...</p>
-                    <small class="text-muted">Medical Enhanced Filter & Attention Block Aktif</small>
-                </div>
-
-                <div id="resultContent" class="result-content mt-4">
-                    
-                    <div class="diagnosis-header">
-                        <div>
-                            <div class="text-uppercase small text-muted fw-bold mb-1">Tespit Edilen Sınıf</div>
-                            <div class="detected-class" id="className">---</div>
-                        </div>
-                        <span id="confBadge" class="confidence-badge badge-high mt-2">---</span>
-                    </div>
-
-                    <div class="mb-4">
-                        <div class="d-flex justify-content-between mb-1">
-                            <small class="text-muted">Model Güven Skoru</small>
-                            <small class="fw-bold" id="confText">---</small>
-                        </div>
-                        <div class="progress" style="height: 8px;">
-                            <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
-                        </div>
-                    </div>
-
-                    <div class="alert alert-light border shadow-sm mb-4">
-                        <strong><i class="fas fa-info-circle me-1 text-primary"></i> Klinik Bilgi:</strong>
-                        <p class="mb-0 mt-1 small text-secondary" id="clinicalInfo">---</p>
-                    </div>
-
-                    <!-- GRAD-CAM BÖLÜMÜ -->
-                    <div id="gradcamContainer" class="gradcam-section" style="display: none;">
-                        <div class="gradcam-title">
-                            <i class="fas fa-eye me-1 text-danger"></i> Grad-CAM Açıklanabilirlik Haritası
-                        </div>
-                        <div class="gradcam-subtitle">
-                            Modelin kararını etkileyen bölgeler kırmızı/sarı renk ile vurgulanmıştır.
-                        </div>
-                        <div class="gradcam-grid">
-                            <div class="gradcam-card">
-                                <p><i class="fas fa-image me-1"></i>Orijinal Görüntü</p>
-                                <img id="originalImage" class="img-original" alt="Orijinal">
-                            </div>
-                            <div class="gradcam-card">
-                                <p><i class="fas fa-fire me-1 text-danger"></i>Grad-CAM Overlay</p>
-                                <img id="gradcamImage" class="img-heatmap" alt="Grad-CAM">
-                            </div>
-                        </div>
-                        <div class="gradcam-legend">
-                            <span>Düşük</span>
-                            <div class="gradcam-legend-bar"></div>
-                            <span>Yüksek</span>
-                        </div>
-                    </div>
-
-                    <div id="agentReportContainer" class="alert alert-info border shadow-sm mb-4" style="display: none; background-color: #f0f9ff; border-color: #bae6fd;">
-                        <div class="d-flex align-items-center mb-2">
-                            <i class="fas fa-robot fa-lg me-2 text-primary"></i>
-                            <strong class="text-primary" style="font-size: 1.1rem;">Yapay Zeka Hematolog Analizi</strong>
-                            <span class="badge bg-primary ms-auto rounded-pill">Gemini 2.5 Flash</span>
-                        </div>
-                        <hr style="border-color: #bae6fd; opacity: 0.5;">
-                        <p class="mb-0 text-dark" id="agentReportText" style="font-style: italic; line-height: 1.6; font-size: 0.95rem;">---</p>
-                    </div>
-
-                    <div style="height: 200px; position: relative;" class="mb-4">
-                        <canvas id="probChart"></canvas>
-                    </div>
-
-                    <div class="tech-specs">
-                        <div class="d-flex align-items-center mb-2">
-                            <i class="fas fa-server me-2 text-secondary"></i>
-                            <strong>Sistem Parametreleri</strong>
-                        </div>
-                        <ul class="list-unstyled mb-0 text-muted">
-                            <li><i class="fas fa-check-circle text-success me-2"></i>Mimari: <strong>DenseNet121</strong></li>
-                            <li><i class="fas fa-check-circle text-success me-2"></i>Attention: <strong>CBAM (Spatial + Channel)</strong></li>
-                            <li><i class="fas fa-check-circle text-success me-2"></i>Filtre: <strong>Medical Enhanced</strong> (CLAHE)</li>
-                            <li><i class="fas fa-check-circle text-success me-2"></i>Açıklanabilirlik: <strong>Grad-CAM Aktif</strong></li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div id="errorState" class="alert alert-danger mt-3" style="display: none;"></div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-    let myChart = null;
-    let uploadedImageData = null;
-    const dropZone = document.getElementById('dropZone');
-
-    // ===== DRAG & DROP =====
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, preventDefaults, false);
-        document.body.addEventListener(eventName, preventDefaults, false);
-    });
-
-    function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
-
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-active'), false);
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-active'), false);
-    });
-
-    dropZone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]), false);
-
-    // ===== DOSYA YÜKLEME =====
-    function handleFile(file) {
-        if (!file) return;
-
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        document.getElementById('fileInput').files = dataTransfer.files;
-
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            uploadedImageData = e.target.result;
-            document.getElementById('previewImg').src = uploadedImageData;
-            document.getElementById('previewBox').style.display = 'block';
-            document.getElementById('dropZone').style.display = 'none';
-            document.getElementById('uploadDoneState').style.display = 'none';
-            document.getElementById('analyzeBtn').disabled = false;
-            clearResultsUI();
-        };
-        reader.readAsDataURL(file);
-    }
-
-    // ===== SIFIRLAMA =====
-    function resetUI() {
-        document.getElementById('fileInput').value = "";
-        document.getElementById('previewImg').src = "";
-        uploadedImageData = null;
-
-        document.getElementById('previewBox').style.display = 'none';
-        document.getElementById('dropZone').style.display = 'flex';
-        document.getElementById('uploadDoneState').style.display = 'none';
-        
-        document.getElementById('analyzeBtn').disabled = true;
-        document.getElementById('analyzeBtn').style.display = 'block';
-        document.getElementById('resetBtn').style.display = 'none';
-
-        clearResultsUI();
-    }
-
-    function clearResultsUI() {
-        document.getElementById('resultContent').style.display = 'none';
-        document.getElementById('emptyState').style.display = 'block';
-        document.getElementById('errorState').style.display = 'none';
-        document.getElementById('printContainer').style.display = 'none';
-        document.getElementById('gradcamContainer').style.display = 'none';
-        document.getElementById('gradcamImage').src = "";
-        document.getElementById('originalImage').src = "";
-        document.getElementById('agentReportContainer').style.display = 'none';
-        document.getElementById('agentReportText').textContent = "---";
-
-        if (myChart) {
-            myChart.destroy();
-            myChart = null;
-        }
-    }
-
-    // ===== ANALİZ =====
-    async function startAnalysis() {
-        const fileInput = document.getElementById('fileInput');
-        const loader = document.getElementById('loader');
-
-        loader.style.display = 'block';
-        document.getElementById('emptyState').style.display = 'none';
-        document.getElementById('resultContent').style.display = 'none';
-        document.getElementById('errorState').style.display = 'none';
-        document.getElementById('analyzeBtn').disabled = true;
-
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
-
-        try {
-            const response = await fetch('/predict', { method: 'POST', body: formData });
-            const data = await response.json();
-            loader.style.display = 'none';
-
-            if (response.ok) {
-                displayResults(data);
-                document.getElementById('analyzeBtn').style.display = 'none';
-                document.getElementById('resetBtn').style.display = 'block';
-                document.getElementById('printContainer').style.display = 'block';
-            } else {
-                showError(data.error || "Bilinmeyen bir hata oluştu.");
-                document.getElementById('analyzeBtn').disabled = false;
-            }
-        } catch (error) {
-            loader.style.display = 'none';
-            showError("Sunucu bağlantı hatası: " + error.message);
-            document.getElementById('analyzeBtn').disabled = false;
-        }
-    }
-
-    // ===== SONUÇLARI GÖSTER =====
-    function displayResults(data) {
-        document.getElementById('previewBox').style.display = 'none';
-        document.getElementById('dropZone').style.display = 'none';
-        document.getElementById('uploadDoneState').style.display = 'block';
-
-        document.getElementById('resultContent').style.display = 'block';
-
-        // Sınıf adı ve klinik bilgi
-        document.getElementById('className').textContent = data.predicted_class;
-        document.getElementById('clinicalInfo').textContent = data.description;
-
-        // Güven skoru
-        const confPercent = (data.confidence * 100).toFixed(1);
-        document.getElementById('confText').textContent = '%' + confPercent;
-        
-        const bar = document.getElementById('progressBar');
-        const badge = document.getElementById('confBadge');
-        
-        bar.style.width = confPercent + '%';
-        bar.className = 'progress-bar';
-        badge.className = 'confidence-badge mt-2';
-
-        if (data.confidence > 0.90) {
-            badge.textContent = "Yüksek Güven";
-            badge.classList.add('badge-high');
-            bar.classList.add('bg-success');
-        } else if (data.confidence > 0.70) {
-            badge.textContent = "Orta Güven";
-            badge.classList.add('badge-medium');
-            bar.classList.add('bg-warning');
-        } else {
-            badge.textContent = "Düşük Güven";
-            badge.classList.add('badge-low');
-            bar.classList.add('bg-danger');
-        }
-
-        const gradcamContainer = document.getElementById('gradcamContainer');
-        const gradcamImage = document.getElementById('gradcamImage');
-        const originalImage = document.getElementById('originalImage');
-
-        if (data.heatmap) {
-            gradcamImage.src = 'data:image/jpeg;base64,' + data.heatmap;
-
-            
-            if (uploadedImageData) {
-                originalImage.src = uploadedImageData;
+                display: grid;
+                grid-template-columns: 1fr;
             }
 
-            gradcamContainer.style.display = 'block';
-        } else {
-            gradcamContainer.style.display = 'none';
-        }
-
-        updateChart(data.all_probabilities);
-
-        if (data.agent_report) {
-            document.getElementById('agentReportText').textContent = data.agent_report;
-            document.getElementById('agentReportContainer').style.display = 'block';
-        } 
-    }
-
-    // ===== GRAFİK =====
-    function updateChart(probs) {
-        const ctx = document.getElementById('probChart').getContext('2d');
-        if (myChart) {
-            myChart.destroy();
-            myChart = null;
-        }
-
-        myChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: Object.keys(probs),
-                datasets: [{
-                    label: 'Olasılık (%)',
-                    data: Object.values(probs).map(p => (p * 100).toFixed(1)),
-                    backgroundColor: '#0ea5e9',
-                    borderRadius: 6,
-                    barThickness: 25
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { beginAtZero: true, max: 100, grid: { color: '#f1f5f9' } },
-                    x: { grid: { display: false } }
+            @media (min-width: 768px) {
+                .grid-layout {
+                    grid-template-columns: 40% 60%;
                 }
             }
-        });
-    }
 
-    function showError(msg) {
-        const err = document.getElementById('errorState');
-        err.textContent = msg;
-        err.style.display = 'block';
-    }
-</script>
+            .upload-section {
+                padding: 30px;
+                background: #f8fafc;
+                border-right: 1px solid #e2e8f0;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                min-height: 450px;
+            }
 
-</body>
+            .drop-zone {
+                width: 100%;
+                height: 100%;
+                min-height: 250px;
+                border: 2px dashed #cbd5e1;
+                border-radius: 12px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 0.2s ease-in-out;
+                background: white;
+            }
+
+            .drop-zone:hover,
+            .drop-zone.drag-active {
+                border-color: var(--medical-blue);
+                background-color: var(--active-drop);
+            }
+
+            .drop-zone i {
+                font-size: 3rem;
+                color: #94a3b8;
+                margin-bottom: 15px;
+                transition: color 0.2s;
+            }
+
+            .drop-zone:hover i,
+            .drop-zone.drag-active i {
+                color: var(--medical-blue);
+            }
+
+            .preview-box {
+                display: none;
+                width: 100%;
+                max-width: 100%;
+                margin-bottom: 20px;
+                border-radius: 12px;
+                overflow: hidden;
+                border: 3px solid white;
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            }
+
+            .preview-img {
+                width: 100%;
+                height: auto;
+                display: block;
+                max-height: 300px;
+                object-fit: contain;
+                background-color: #000;
+            }
+
+            .results-section {
+                padding: 30px;
+                position: relative;
+            }
+            .empty-state {
+                text-align: center;
+                color: #94a3b8;
+                margin-top: 80px;
+            }
+            .result-content {
+                display: none;
+            }
+
+            .diagnosis-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 20px;
+                border-bottom: 2px solid #f1f5f9;
+                padding-bottom: 15px;
+            }
+
+            .detected-class {
+                font-size: 2rem;
+                font-weight: 800;
+                color: var(--medical-dark);
+                line-height: 1.2;
+            }
+
+            .confidence-badge {
+                font-size: 0.85rem;
+                padding: 4px 12px;
+                border-radius: 20px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+            .badge-high {
+                background: #dcfce7;
+                color: #166534;
+            }
+            .badge-medium {
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .badge-low {
+                background: #fee2e2;
+                color: #991b1b;
+            }
+
+            .btn-action {
+                width: 100%;
+                padding: 12px;
+                border: none;
+                border-radius: 8px;
+                font-weight: 600;
+                transition: all 0.2s;
+            }
+            .btn-analyze {
+                background: var(--medical-blue);
+                color: white;
+            }
+            .btn-analyze:hover {
+                background: #0284c7;
+            }
+            .btn-analyze:disabled {
+                background: #cbd5e1;
+                cursor: not-allowed;
+            }
+
+            .btn-reset {
+                background: white;
+                color: #64748b;
+                border: 2px solid #e2e8f0;
+                margin-top: 10px;
+            }
+            .btn-reset:hover {
+                background: #f1f5f9;
+                color: var(--medical-dark);
+                border-color: #cbd5e1;
+            }
+
+            .loader {
+                display: none;
+                text-align: center;
+                padding: 40px;
+            }
+            .tech-specs {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 15px;
+                margin-top: 20px;
+                font-size: 0.85rem;
+            }
+
+            /* ===== GRAD-CAM STYLES ===== */
+            .gradcam-section {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 20px;
+                margin-top: 20px;
+                margin-bottom: 20px;
+            }
+
+            .gradcam-title {
+                font-size: 1rem;
+                font-weight: 700;
+                color: var(--medical-dark);
+                margin-bottom: 5px;
+            }
+
+            .gradcam-subtitle {
+                color: #64748b;
+                font-size: 0.8rem;
+                margin-bottom: 15px;
+            }
+
+            .gradcam-grid {
+                display: flex;
+                justify-content: center;
+                gap: 20px;
+                flex-wrap: wrap;
+            }
+
+            .gradcam-card {
+                text-align: center;
+            }
+
+            .gradcam-card p {
+                font-size: 0.8rem;
+                font-weight: 600;
+                color: #475569;
+                margin-bottom: 8px;
+            }
+
+            .gradcam-card img {
+                width: 200px;
+                height: 200px;
+                object-fit: contain;
+                border-radius: 8px;
+                background: #000;
+            }
+
+            .gradcam-card .img-original {
+                border: 2px solid #cbd5e1;
+            }
+
+            .gradcam-card .img-heatmap {
+                border: 2px solid #e74c3c;
+            }
+
+            .gradcam-legend {
+                margin-top: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+            }
+
+            .gradcam-legend span {
+                font-size: 0.75rem;
+                color: #64748b;
+            }
+
+            .gradcam-legend-bar {
+                width: 150px;
+                height: 12px;
+                border-radius: 6px;
+                background: linear-gradient(
+                    to right,
+                    #0000ff,
+                    #00ffff,
+                    #00ff00,
+                    #ffff00,
+                    #ff0000
+                );
+            }
+
+            .upload-done-state {
+                text-align: center;
+                color: #64748b;
+                padding: 20px;
+            }
+
+            .upload-done-state i {
+                font-size: 3rem;
+                color: #22c55e;
+                margin-bottom: 15px;
+            }
+
+            @media print {
+                body * {
+                    visibility: hidden;
+                }
+                .main-container,
+                .analysis-card {
+                    margin: 0;
+                    padding: 0;
+                    box-shadow: none;
+                    border: none;
+                    max-width: 100%;
+                }
+                .results-section,
+                .results-section * {
+                    visibility: visible;
+                }
+                .results-section {
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    width: 100%;
+                    padding: 20px;
+                }
+                .brand-header,
+                .upload-section,
+                .no-print,
+                #emptyState,
+                #loader,
+                #errorState {
+                    display: none !important;
+                }
+                .result-content::before {
+                    content: 'Hematology AI Assistant - Analysis Report';
+                    display: block;
+                    font-size: 1.2rem;
+                    font-weight: bold;
+                    margin-bottom: 20px;
+                    color: var(--medical-blue);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="main-container">
+            <div class="brand-header no-print">
+                <h1>
+                    <i class="fas fa-notes-medical text-primary me-2"></i
+                    >Digital Pathology Assistant
+                </h1>
+                <div class="text-muted">
+                    AI-Powered Peripheral Blood Smear Analysis
+                </div>
+            </div>
+
+            <div class="analysis-card">
+                <div class="grid-layout">
+                    <!-- LEFT PANEL -->
+                    <div class="upload-section no-print">
+                        <div id="previewBox" class="preview-box">
+                            <img
+                                id="previewImg"
+                                class="preview-img"
+                                alt="Microscope View"
+                            />
+                        </div>
+
+                        <div
+                            class="drop-zone"
+                            id="dropZone"
+                            onclick="
+                                document.getElementById('fileInput').click()
+                            "
+                        >
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <h6 class="mb-1">Drag and Drop Image Here</h6>
+                            <small class="text-muted"
+                                >or click to select a file</small
+                            >
+                            <input
+                                type="file"
+                                id="fileInput"
+                                accept="image/*"
+                                hidden
+                                onchange="handleFile(this.files[0])"
+                            />
+                        </div>
+
+                        <div
+                            id="uploadDoneState"
+                            class="upload-done-state"
+                            style="display: none"
+                        >
+                            <i class="fas fa-check-circle"></i>
+                            <h6>Analysis Completed</h6>
+                            <p class="small">
+                                Results are displayed in the right panel.
+                            </p>
+                        </div>
+
+                        <div class="w-100 mt-3">
+                            <button
+                                class="btn-action btn-analyze"
+                                id="analyzeBtn"
+                                onclick="startAnalysis()"
+                                disabled
+                            >
+                                Start Analysis
+                            </button>
+                            <button
+                                class="btn-action btn-reset"
+                                id="resetBtn"
+                                onclick="resetUI()"
+                                style="display: none"
+                            >
+                                <i class="fas fa-redo me-2"></i>New Analysis
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT PANEL -->
+                    <div class="results-section">
+                        <div
+                            id="printContainer"
+                            class="position-absolute top-0 end-0 p-3 no-print"
+                            style="display: none; z-index: 10"
+                        >
+                            <button
+                                onclick="window.print()"
+                                class="btn btn-sm btn-outline-secondary bg-white"
+                            >
+                                <i class="fas fa-print me-1"></i>Print Report
+                            </button>
+                        </div>
+
+                        <div id="emptyState" class="empty-state">
+                            <i
+                                class="fas fa-microscope fa-3x mb-3 text-secondary"
+                            ></i>
+                            <h5>Analysis Pending</h5>
+                            <p class="small">
+                                Please upload a cell image from the left panel.
+                            </p>
+                        </div>
+
+                        <div id="loader" class="loader">
+                            <div
+                                class="spinner-border text-primary"
+                                role="status"
+                            ></div>
+                            <p class="mt-3 fw-bold text-primary">
+                                Processing Image...
+                            </p>
+                            <small class="text-muted"
+                                >Medical Enhanced Filter & Attention Block
+                                Activated</small
+                            >
+                        </div>
+
+                        <div id="resultContent" class="result-content mt-4">
+                            <div class="diagnosis-header">
+                                <div>
+                                    <div
+                                        class="text-uppercase small text-muted fw-bold mb-1"
+                                    >
+                                        Detected Class
+                                    </div>
+                                    <div class="detected-class" id="className">
+                                        ---
+                                    </div>
+                                </div>
+                                <span
+                                    id="confBadge"
+                                    class="confidence-badge badge-high mt-2"
+                                    >---</span
+                                >
+                            </div>
+
+                            <div class="mb-4">
+                                <div
+                                    class="d-flex justify-content-between mb-1"
+                                >
+                                    <small class="text-muted"
+                                        >Model Confidence Score</small
+                                    >
+                                    <small class="fw-bold" id="confText"
+                                        >---</small
+                                    >
+                                </div>
+                                <div class="progress" style="height: 8px">
+                                    <div
+                                        id="progressBar"
+                                        class="progress-bar"
+                                        role="progressbar"
+                                        style="width: 0%"
+                                    ></div>
+                                </div>
+                            </div>
+
+                            <div
+                                class="alert alert-light border shadow-sm mb-4"
+                            >
+                                <strong
+                                    ><i
+                                        class="fas fa-info-circle me-1 text-primary"
+                                    ></i>
+                                    Clinical Information:</strong
+                                >
+                                <p
+                                    class="mb-0 mt-1 small text-secondary"
+                                    id="clinicalInfo"
+                                >
+                                    ---
+                                </p>
+                            </div>
+
+                            <!-- GRAD-CAM SECTION -->
+                            <div
+                                id="gradcamContainer"
+                                class="gradcam-section"
+                                style="display: none"
+                            >
+                                <div class="gradcam-title">
+                                    <i class="fas fa-eye me-1 text-danger"></i>
+                                    Grad-CAM Explainable Heatmap
+                                </div>
+                                <div class="gradcam-subtitle">
+                                    Regions influencing the model's decision are
+                                    highlighted in red/yellow.
+                                </div>
+                                <div class="gradcam-grid">
+                                    <div class="gradcam-card">
+                                        <p>
+                                            <i class="fas fa-image me-1"></i
+                                            >Original Image
+                                        </p>
+                                        <img
+                                            id="originalImage"
+                                            class="img-original"
+                                            alt="Original Image"
+                                        />
+                                    </div>
+                                    <div class="gradcam-card">
+                                        <p>
+                                            <i
+                                                class="fas fa-fire me-1 text-danger"
+                                            ></i
+                                            >Grad-CAM Overlay
+                                        </p>
+                                        <img
+                                            id="gradcamImage"
+                                            class="img-heatmap"
+                                            alt="Grad-CAM"
+                                        />
+                                    </div>
+                                </div>
+                                <div class="gradcam-legend">
+                                    <span>Low</span>
+                                    <div class="gradcam-legend-bar"></div>
+                                    <span>High</span>
+                                </div>
+                            </div>
+
+                            <div
+                                id="agentReportContainer"
+                                class="alert alert-info border shadow-sm mb-4"
+                                style="
+                                    display: none;
+                                    background-color: #f0f9ff;
+                                    border-color: #bae6fd;
+                                "
+                            >
+                                <div class="d-flex align-items-center mb-2">
+                                    <i
+                                        class="fas fa-robot fa-lg me-2 text-primary"
+                                    ></i>
+                                    <strong
+                                        class="text-primary"
+                                        style="font-size: 1.1rem"
+                                        >Artificial Intelligence Hematology
+                                        Analysis</strong
+                                    >
+                                    <span
+                                        class="badge bg-primary ms-auto rounded-pill"
+                                        >Gemini 2.5 Flash</span
+                                    >
+                                </div>
+                                <hr
+                                    style="border-color: #bae6fd; opacity: 0.5"
+                                />
+                                <p
+                                    class="mb-0 text-dark"
+                                    id="agentReportText"
+                                    style="
+                                        font-style: italic;
+                                        line-height: 1.6;
+                                        font-size: 0.95rem;
+                                    "
+                                >
+                                    ---
+                                </p>
+                            </div>
+
+                            <div
+                                style="height: 200px; position: relative"
+                                class="mb-4"
+                            >
+                                <canvas id="probChart"></canvas>
+                            </div>
+
+                            <div class="tech-specs">
+                                <div class="d-flex align-items-center mb-2">
+                                    <i
+                                        class="fas fa-server me-2 text-secondary"
+                                    ></i>
+                                    <strong>System Parameters</strong>
+                                </div>
+                                <ul class="list-unstyled mb-0 text-muted">
+                                    <li>
+                                        <i
+                                            class="fas fa-check-circle text-success me-2"
+                                        ></i
+                                        >Architecture:
+                                        <strong>DenseNet121</strong>
+                                    </li>
+                                    <li>
+                                        <i
+                                            class="fas fa-check-circle text-success me-2"
+                                        ></i
+                                        >Attention:
+                                        <strong
+                                            >CBAM (Spatial + Channel)</strong
+                                        >
+                                    </li>
+                                    <li>
+                                        <i
+                                            class="fas fa-check-circle text-success me-2"
+                                        ></i
+                                        >Filter:
+                                        <strong>Medical Enhanced</strong>
+                                        (CLAHE)
+                                    </li>
+                                    <li>
+                                        <i
+                                            class="fas fa-check-circle text-success me-2"
+                                        ></i
+                                        >Explainability:
+                                        <strong>Grad-CAM Activated</strong>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div
+                            id="errorState"
+                            class="alert alert-danger mt-3"
+                            style="display: none"
+                        ></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let myChart = null;
+            let uploadedImageData = null;
+            const dropZone = document.getElementById('dropZone');
+
+            // ===== DRAG & DROP =====
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(
+                (eventName) => {
+                    dropZone.addEventListener(
+                        eventName,
+                        preventDefaults,
+                        false,
+                    );
+                    document.body.addEventListener(
+                        eventName,
+                        preventDefaults,
+                        false,
+                    );
+                },
+            );
+
+            function preventDefaults(e) {
+                // Block browser-native drag/drop behavior so dropped files stay inside the app flow.
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            ['dragenter', 'dragover'].forEach((eventName) => {
+                dropZone.addEventListener(
+                    eventName,
+                    () => dropZone.classList.add('drag-active'),
+                    false,
+                );
+            });
+
+            ['dragleave', 'drop'].forEach((eventName) => {
+                dropZone.addEventListener(
+                    eventName,
+                    () => dropZone.classList.remove('drag-active'),
+                    false,
+                );
+            });
+
+            dropZone.addEventListener(
+                'drop',
+                (e) => handleFile(e.dataTransfer.files[0]),
+                false,
+            );
+
+            // ===== FILE UPLOAD =====
+            function handleFile(file) {
+                if (!file) return;
+
+                // Mirror drag-drop selection into the hidden file input for a single source of truth.
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                document.getElementById('fileInput').files = dataTransfer.files;
+
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    // Persist preview data for reuse in the side-by-side Grad-CAM view.
+                    uploadedImageData = e.target.result;
+                    document.getElementById('previewImg').src =
+                        uploadedImageData;
+                    document.getElementById('previewBox').style.display =
+                        'block';
+                    document.getElementById('dropZone').style.display = 'none';
+                    document.getElementById('uploadDoneState').style.display =
+                        'none';
+                    document.getElementById('analyzeBtn').disabled = false;
+                    clearResultsUI();
+                };
+                reader.readAsDataURL(file);
+            }
+
+            // ===== RESET =====
+            function resetUI() {
+                // Return UI to the initial state for a new independent analysis session.
+                document.getElementById('fileInput').value = '';
+                document.getElementById('previewImg').src = '';
+                uploadedImageData = null;
+
+                document.getElementById('previewBox').style.display = 'none';
+                document.getElementById('dropZone').style.display = 'flex';
+                document.getElementById('uploadDoneState').style.display =
+                    'none';
+
+                document.getElementById('analyzeBtn').disabled = true;
+                document.getElementById('analyzeBtn').style.display = 'block';
+                document.getElementById('resetBtn').style.display = 'none';
+
+                clearResultsUI();
+            }
+
+            function clearResultsUI() {
+                // Centralized cleanup prevents stale charts, overlays, and agent text between runs.
+                document.getElementById('resultContent').style.display = 'none';
+                document.getElementById('emptyState').style.display = 'block';
+                document.getElementById('errorState').style.display = 'none';
+                document.getElementById('printContainer').style.display =
+                    'none';
+                document.getElementById('gradcamContainer').style.display =
+                    'none';
+                document.getElementById('gradcamImage').src = '';
+                document.getElementById('originalImage').src = '';
+                document.getElementById('agentReportContainer').style.display =
+                    'none';
+                document.getElementById('agentReportText').textContent = '---';
+
+                if (myChart) {
+                    myChart.destroy();
+                    myChart = null;
+                }
+            }
+
+            // ===== ANALYSIS =====
+            async function startAnalysis() {
+                // Execute one inference request and keep loading/error/result states mutually exclusive.
+                const fileInput = document.getElementById('fileInput');
+                const loader = document.getElementById('loader');
+
+                loader.style.display = 'block';
+                document.getElementById('emptyState').style.display = 'none';
+                document.getElementById('resultContent').style.display = 'none';
+                document.getElementById('errorState').style.display = 'none';
+                document.getElementById('analyzeBtn').disabled = true;
+
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+
+                try {
+                    const response = await fetch('/predict', {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    const data = await response.json();
+                    loader.style.display = 'none';
+
+                    if (response.ok) {
+                        displayResults(data);
+                        document.getElementById('analyzeBtn').style.display =
+                            'none';
+                        document.getElementById('resetBtn').style.display =
+                            'block';
+                        document.getElementById(
+                            'printContainer',
+                        ).style.display = 'block';
+                    } else {
+                        showError(data.error || 'Unknown error occurred.');
+                        document.getElementById('analyzeBtn').disabled = false;
+                    }
+                } catch (error) {
+                    loader.style.display = 'none';
+                    showError('Server connection error: ' + error.message);
+                    document.getElementById('analyzeBtn').disabled = false;
+                }
+            }
+
+            // ===== DISPLAY RESULTS =====
+            function displayResults(data) {
+                // Map backend payload into all visible widgets in a deterministic order.
+                document.getElementById('previewBox').style.display = 'none';
+                document.getElementById('dropZone').style.display = 'none';
+                document.getElementById('uploadDoneState').style.display =
+                    'block';
+
+                document.getElementById('resultContent').style.display =
+                    'block';
+
+                // Class name and clinical information
+                document.getElementById('className').textContent =
+                    data.predicted_class;
+                document.getElementById('clinicalInfo').textContent =
+                    data.description;
+
+                // Confidence score
+                const confPercent = (data.confidence * 100).toFixed(1);
+                document.getElementById('confText').textContent =
+                    '%' + confPercent;
+
+                const bar = document.getElementById('progressBar');
+                const badge = document.getElementById('confBadge');
+
+                bar.style.width = confPercent + '%';
+                bar.className = 'progress-bar';
+                badge.className = 'confidence-badge mt-2';
+
+                if (data.confidence > 0.9) {
+                    badge.textContent = 'High Confidence';
+                    badge.classList.add('badge-high');
+                    bar.classList.add('bg-success');
+                } else if (data.confidence > 0.7) {
+                    badge.textContent = 'Medium Confidence';
+                    badge.classList.add('badge-medium');
+                    bar.classList.add('bg-warning');
+                } else {
+                    badge.textContent = 'Low Confidence';
+                    badge.classList.add('badge-low');
+                    bar.classList.add('bg-danger');
+                }
+
+                const gradcamContainer =
+                    document.getElementById('gradcamContainer');
+                const gradcamImage = document.getElementById('gradcamImage');
+                const originalImage = document.getElementById('originalImage');
+
+                // Show Grad-CAM panel only when backend returns a renderable heatmap payload.
+                if (data.heatmap) {
+                    gradcamImage.src = 'data:image/jpeg;base64,' + data.heatmap;
+
+                    if (uploadedImageData) {
+                        originalImage.src = uploadedImageData;
+                    }
+
+                    gradcamContainer.style.display = 'block';
+                } else {
+                    gradcamContainer.style.display = 'none';
+                }
+
+                updateChart(data.all_probabilities);
+
+                if (data.agent_report) {
+                    document.getElementById('agentReportText').textContent =
+                        data.agent_report;
+                    document.getElementById(
+                        'agentReportContainer',
+                    ).style.display = 'block';
+                }
+            }
+
+            // ===== CHART =====
+            function updateChart(probs) {
+                // Recreate chart instance each run to avoid stale datasets and duplicated canvas state.
+                const ctx = document
+                    .getElementById('probChart')
+                    .getContext('2d');
+                if (myChart) {
+                    myChart.destroy();
+                    myChart = null;
+                }
+
+                myChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(probs),
+                        datasets: [
+                            {
+                                label: 'Probability (%)',
+                                data: Object.values(probs).map((p) =>
+                                    (p * 100).toFixed(1),
+                                ),
+                                backgroundColor: '#0ea5e9',
+                                borderRadius: 6,
+                                barThickness: 25,
+                            },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100,
+                                grid: { color: '#f1f5f9' },
+                            },
+                            x: { grid: { display: false } },
+                        },
+                    },
+                });
+            }
+
+            function showError(msg) {
+                // Single error outlet keeps network/server failures consistent for users.
+                const err = document.getElementById('errorState');
+                err.textContent = msg;
+                err.style.display = 'block';
+            }
+        </script>
+    </body>
 </html>

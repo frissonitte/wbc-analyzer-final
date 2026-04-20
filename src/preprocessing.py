@@ -39,6 +39,8 @@ class PreprocessingFilters:
 
     @staticmethod
     def medical_enhanced(image):
+        """Apply robust contrast normalization and edge-aware enhancement for smear images."""
+        # Percentile clipping stabilizes exposure differences across microscopes.
         normalized = image.copy().astype(np.float32)
         for i in range(3):
             channel = normalized[:, :, i]
@@ -48,6 +50,7 @@ class PreprocessingFilters:
             )
         normalized = normalized.astype(np.uint8)
 
+        # CLAHE in LAB space improves local contrast without shifting hue too much.
         lab = cv2.cvtColor(normalized, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
@@ -55,6 +58,7 @@ class PreprocessingFilters:
         lab = cv2.merge([l, a, b])
         enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
+        # Bilateral filter denoises while preserving boundaries.
         enhanced = cv2.bilateralFilter(enhanced, 5, 50, 50)
 
         gray = cv2.cvtColor(enhanced, cv2.COLOR_RGB2GRAY)
@@ -64,6 +68,7 @@ class PreprocessingFilters:
         sharpening_kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
         sharpened = cv2.filter2D(enhanced, -1, sharpening_kernel)
 
+        # Edge-weighted blending avoids over-sharpening smooth regions.
         mask = edges.astype(np.float32) / 255.0
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
         mask = np.stack([mask] * 3, axis=-1)
@@ -108,6 +113,7 @@ class PreprocessingFilters:
 
         mask = cv2.bitwise_or(non_white, nucleus_hint)
 
+        # Morphological cleanup removes small background speckles.
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
@@ -127,6 +133,7 @@ class PreprocessingFilters:
         if max_mask > 0:
             soft_mask = soft_mask / max_mask
 
+        # If foreground estimation fails, return an all-ones mask to avoid hiding XAI.
         coverage = float(np.mean(soft_mask))
         if coverage < 0.05:
             return np.ones(mask.shape[:2], dtype=np.float32)

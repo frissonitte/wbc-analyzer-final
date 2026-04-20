@@ -6,6 +6,7 @@ layers = keras.layers
 
 @tf.keras.utils.register_keras_serializable(package="WBC")
 class MedSwish(layers.Layer):
+    """Swish-like activation with trainable slope and enhancement terms."""
 
     def __init__(self, alpha=0.1, beta=1.0, trainable_params=True, **kwargs):
         super(MedSwish, self).__init__(**kwargs)
@@ -34,6 +35,7 @@ class MedSwish(layers.Layer):
 
     def call(self, x):
         x = tf.cast(x, dtype=self.compute_dtype)
+        # Base swish branch + bounded enhancement branch.
         swish_part = x * tf.nn.sigmoid(self.beta * x)
         enhancement = 1.0 + self.alpha * tf.nn.tanh(x)
         return swish_part * enhancement
@@ -52,6 +54,7 @@ class MedSwish(layers.Layer):
 
 @tf.keras.utils.register_keras_serializable(package="WBC")
 class WBCAttentionBlock(layers.Layer):
+    """CBAM-style attention block with channel then spatial refinement."""
 
     def __init__(self, reduction_ratio=16, **kwargs):
         super(WBCAttentionBlock, self).__init__(**kwargs)
@@ -82,6 +85,7 @@ class WBCAttentionBlock(layers.Layer):
         super(WBCAttentionBlock, self).build(input_shape)
 
     def channel_attention(self, x):
+        # Pool across spatial axes to summarize each channel.
         avg_pool = tf.reduce_mean(x, axis=[1, 2], keepdims=True)
         max_pool = tf.reduce_max(x, axis=[1, 2], keepdims=True)
 
@@ -98,6 +102,7 @@ class WBCAttentionBlock(layers.Layer):
         return x * channel_att
 
     def spatial_attention(self, x):
+        # Pool across channels to highlight informative spatial locations.
         avg_pool = tf.reduce_mean(x, axis=-1, keepdims=True)
         max_pool = tf.reduce_max(x, axis=-1, keepdims=True)
         concat = tf.concat([avg_pool, max_pool], axis=-1)
@@ -108,6 +113,7 @@ class WBCAttentionBlock(layers.Layer):
         return x * spatial_att
 
     def call(self, x):
+        # Sequential channel->spatial attention keeps behavior deterministic.
         x = self.channel_attention(x)
         x = self.spatial_attention(x)
         return x

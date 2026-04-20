@@ -5,9 +5,9 @@ from tensorflow import keras
 @tf.keras.utils.register_keras_serializable(package="WBC")
 class WBCFocalLoss(keras.losses.Loss):
     """
-    ★ ÖZGÜN LOSS FUNCTION - WBC Focal Loss ★
+    WBC focal loss.
 
-    Formül: FL(p_t) = -α_t * (1 - p_t)^γ * log(p_t)
+    Formula: FL(p_t) = -α_t * (1 - p_t)^γ * log(p_t)
     """
 
     def __init__(
@@ -32,6 +32,7 @@ class WBCFocalLoss(keras.losses.Loss):
             self.class_weights = tf.constant(class_weights, dtype=tf.float32)
 
     def call(self, y_true, y_pred):
+        """Compute class-weighted focal loss with optional label smoothing."""
         num_classes = tf.shape(y_true)[-1]
         y_true_smooth = y_true * (
             1.0 - self.label_smoothing
@@ -51,6 +52,7 @@ class WBCFocalLoss(keras.losses.Loss):
         return tf.reduce_mean(tf.reduce_sum(focal_loss, axis=-1))
 
     def get_config(self):
+        """Return serializable layer configuration."""
         config = super(WBCFocalLoss, self).get_config()
         config.update(
             {
