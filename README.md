@@ -25,7 +25,7 @@ _in progress..._
 ## Model Access
 
 The trained model file (`.keras`) is not included in this repository due to its size.  
-📥 **Download:** [wbc_final_model_densenet_focus_v6_rerun.keras](https://drive.google.com/file/d/1imbnTiTTxEpuXD_HB_IJm0RxE03PJ6GQ/view?usp=sharing)  
+📥 **Download:** [wbc_final_model_densenet.keras](https://drive.google.com/file/d/1imbnTiTTxEpuXD_HB_IJm0RxE03PJ6GQ/view?usp=sharing)  
 After downloading, place it in: `data/models/`
 
 ## Quick Start
