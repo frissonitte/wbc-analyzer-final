@@ -14,6 +14,7 @@ import keras
 import base64
 from google import genai
 from google.genai import types
+from openai import OpenAI
 import PIL.Image
 from dotenv import load_dotenv
 
@@ -141,40 +142,267 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = heatmap / max_val
     return heatmap.numpy().astype(np.float32)
 
+
+def generate_agent_report_with_gpt4o(prompt, heatmap_img_array, system_instruction, github_token):
+    """Generate report with GitHub Models gpt-4o as primary model."""
+    client = OpenAI(
+        base_url="https://models.github.ai/inference",
+        api_key=github_token,
+    )
+    ok, buffer = cv2.imencode(".jpg", heatmap_img_array, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if not ok:
+        raise RuntimeError("Could not encode heatmap image for gpt-4o request.")
+
+    image_b64 = base64.b64encode(buffer).decode("utf-8")
+    def extract_completion_text(chat_response):
+        if not getattr(chat_response, "choices", None):
+            return ""
+
+        message = chat_response.choices[0].message
+        content = getattr(message, "content", "") or ""
+
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                piece = ""
+                if isinstance(part, dict):
+                    piece = part.get("text") or part.get("content") or ""
+                else:
+                    part_text = getattr(part, "text", None)
+                    if isinstance(part_text, str):
+                        piece = part_text
+                    elif part_text is not None:
+                        piece = getattr(part_text, "value", "") or str(part_text)
+
+                if piece:
+                    parts.append(str(piece))
+            return " ".join(parts).strip()
+
+        return str(content).strip() if content else ""
+
+    try:
+        multimodal_response = client.chat.completions.create(
+            model="openai/gpt-4o",
+            messages=[
+                {
+                    "role": "developer",
+                    "content": system_instruction,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                        },
+                    ],
+                },
+            ],
+            max_tokens=240,
+        )
+        text = extract_completion_text(multimodal_response)
+        if text:
+            return text
+    except Exception as e:
+        print(
+            "gpt-4o multimodal call failed (image may be unsupported). "
+            f"Falling back to text-only: {e}"
+        )
+
+    print("gpt-4o multimodal response was empty. Retrying with text-only fallback.")
+    text_only_prompt = (
+        f"{prompt} "
+        "If image processing is unavailable, provide a cautious preliminary comment "
+        "using only the prediction information and clearly recommend manual review."
+    )
+    text_only_response = client.chat.completions.create(
+        model="openai/gpt-4o",
+        messages=[
+            {
+                "role": "developer",
+                "content": system_instruction,
+            },
+            {
+                "role": "user",
+                "content": text_only_prompt,
+            },
+        ],
+        max_tokens=240,
+    )
+    text = extract_completion_text(text_only_response)
+    if text:
+        return text
+
+    raise RuntimeError("gpt-4o returned empty content for both multimodal and text-only attempts.")
+
+
+def get_env_token(*names):
+    """Return the first non-empty token value among environment variable names."""
+    for name in names:
+        value = os.getenv(name)
+        if value is None:
+            continue
+
+        normalized = value.strip().strip('"').strip("'")
+        if normalized:
+            return normalized
+
+    return ""
+
+
+# Class-specific morphology anchors to reduce generic report patterns.
+CLASS_MORPHOLOGY_CONTEXT = {
+    "Neutrophil": (
+        "Neutrophils are identified by their multi-lobed nucleus (typically 3-5 lobes) "
+        "and pale pink cytoplasm with fine granules. The model should focus on the nuclear "
+        "lobes and their interconnecting filaments, not on background erythrocytes."
+    ),
+    "Lymphocyte": (
+        "Lymphocytes have a large, round, darkly stained nucleus that nearly fills the cell, "
+        "with only a thin rim of pale blue cytoplasm. Correct model focus should be on the "
+        "nucleus-to-cytoplasm ratio and nuclear chromatin density."
+    ),
+    "Monocyte": (
+        "Monocytes are the largest leukocytes with a kidney-shaped or horseshoe-shaped nucleus "
+        "and abundant gray-blue cytoplasm that may contain vacuoles. The nucleus shape and "
+        "cytoplasmic texture are the key discriminating features."
+    ),
+    "Eosinophil": (
+        "Eosinophils have a bilobed nucleus and distinctive large, bright orange-red granules "
+        "filling the cytoplasm. The granule pattern and bilobed nucleus, not background cells, "
+        "should be the model focus."
+    ),
+    "Basophil": (
+        "Basophils are rare and characterized by large, dark purple-blue granules that may "
+        "obscure the nucleus. Correct focus should be on these coarse, deeply stained granules "
+        "and the irregular nuclear outline beneath them."
+    ),
+}
+
+
+SYSTEM_INSTRUCTION = """You are a clinical AI assistant supporting hematology laboratory review.
+Your role is to interpret Grad-CAM explainability heatmaps produced by a white blood cell classification model.
+
+In the provided overlay image:
+- RED/YELLOW areas = regions the model weighted most heavily when making its decision
+- BLUE/DARK areas = regions the model largely ignored
+
+Your response must follow this structure, but write it as flowing prose, not as a numbered list:
+1. One sentence stating the predicted class and confidence level.
+2. One to two sentences describing which morphological structures the heatmap highlights (nucleus, cytoplasm, granules, cell membrane, background, etc.) and whether this aligns with the expected discriminating features for this cell type.
+3. One sentence giving a clinical plausibility verdict: either confirm the focus is medically sound, flag a concern if the model appears to focus on background erythrocytes or staining artifacts, or note uncertainty if the heatmap is diffuse.
+
+Constraints:
+- Do not provide a definitive diagnosis.
+- Do not repeat the class name more than twice.
+- Avoid generic phrases like 'the model performed well' unless genuinely warranted.
+- Keep the total response under 80 words.
+- Write in the same language as the prompt you receive.
+"""
+
+
+def build_agent_prompt(predicted_class, confidence):
+    """Build a class-aware prompt so each report uses distinct morphology anchors."""
+    context = CLASS_MORPHOLOGY_CONTEXT.get(predicted_class, "")
+    if confidence >= 0.90:
+        confidence_descriptor = "high"
+    elif confidence >= 0.70:
+        confidence_descriptor = "moderate"
+    else:
+        confidence_descriptor = "low"
+
+    return (
+        f"The classification model predicted '{predicted_class}' with {confidence_descriptor} "
+        f"confidence ({confidence * 100:.1f}%). "
+        f"Morphological reference for this cell type: {context} "
+        "Based on the Grad-CAM overlay, assess whether the model spatial attention "
+        "aligns with these expected morphological features or shows signs of background dependency."
+    )
+
 def generate_agent_report(predicted_class, confidence, heatmap_img_array):
     """Generate a concise LLM-based interpretation report from XAI overlay image."""
     try:
         load_dotenv()
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        
-        system_instruction = """
-        You are an AI hematologist specialized in peripheral smear analysis.
-        You will receive an XAI Grad-CAM heatmap for a blood cell together with the model prediction.
-        The RED AREAS in the image indicate the cell structures that the model focused on most while making its decision.
-        Your tasks:
-        1. State the model prediction and confidence score.
-        2. Interpret which part of the cell the red areas correspond to, such as the nucleus, cytoplasm, or cell membrane.
-        3. Briefly evaluate whether the model's focus is medically plausible.
-        The report must be professional, objective, and no longer than 3 to 4 sentences. Do not provide a definitive diagnosis.
-        """
+        gemini_api_key = get_env_token("GEMINI_API_KEY")
+        # Support both names to avoid breaking existing local setups.
+        github_token = get_env_token("GITHUB_TOKEN")
+        if not gemini_api_key and not github_token:
+            return {
+                "text": (
+                    "The AI report is unavailable because no LLM token is configured "
+                    "(expected GEMINI_API_KEY or GITHUB_TOKEN)."
+                ),
+                "provider": "No LLM token",
+            }
 
         img_rgb = cv2.cvtColor(heatmap_img_array, cv2.COLOR_BGR2RGB)
         pil_image = PIL.Image.fromarray(img_rgb)
         
-        prompt = f"The model predicted with {confidence * 100:.1f}% confidence that this cell is {predicted_class}. Please review the attached heatmap and write a brief medical preliminary report."
-        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[prompt, pil_image],
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2
-            )
-        )
-        return response.text
+        prompt = build_agent_prompt(predicted_class, confidence)
+
+        primary_error = None
+        gemini_error = None
+
+        if github_token:
+            try:
+                print("Trying GitHub Models primary (openai/gpt-4o)...")
+                response_text = generate_agent_report_with_gpt4o(
+                    prompt,
+                    heatmap_img_array,
+                    SYSTEM_INSTRUCTION,
+                    github_token,
+                )
+                if response_text:
+                    return {
+                        "text": response_text,
+                        "provider": "OpenAI GPT-4o",
+                    }
+                print("gpt-4o primary returned empty content.")
+            except Exception as e:
+                primary_error = e
+                print(f"gpt-4o primary error: {e}")
+
+        if gemini_api_key:
+            try:
+                print("Trying Gemini fallback (gemini-2.5-flash)...")
+                gemini_client = genai.Client(api_key=gemini_api_key)
+                response = gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[prompt, pil_image],
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2,
+                    ),
+                )
+                if response.text:
+                    return {
+                        "text": response.text,
+                        "provider": "Gemini 2.5 Flash",
+                    }
+                print("Gemini fallback returned empty content.")
+            except Exception as e:
+                gemini_error = e
+                print(f"Gemini fallback error: {e}")
+
+        if gemini_error is not None:
+            print(f"Agent error: {gemini_error}")
+        elif primary_error is not None:
+            print(f"Agent error: {primary_error}")
+
+        return {
+            "text": "The AI report could not be generated right now. Please review the model output manually.",
+            "provider": "Rule-based fallback",
+        }
     except Exception as e:
         print(f"Agent error: {e}")
-        return "The AI report could not be generated right now. Please review the model output manually."
+        return {
+            "text": "The AI report could not be generated right now. Please review the model output manually.",
+            "provider": "Rule-based fallback",
+        }
 
 def get_last_conv_layer(model):
     """
@@ -387,12 +615,20 @@ def predict():
         # ===== END GRAD-CAM SECTION =====
 
         agent_report = ""
+        agent_report_model = "Unknown"
         if superimposed_img is not None:
             print("Generating agent report...")
-            agent_report = generate_agent_report(predicted_class, confidence, superimposed_img)
+            agent_result = generate_agent_report(predicted_class, confidence, superimposed_img)
+            if isinstance(agent_result, dict):
+                agent_report = str(agent_result.get("text", "")).strip()
+                agent_report_model = str(agent_result.get("provider", "Unknown")).strip()
+            else:
+                agent_report = str(agent_result).strip()
+                agent_report_model = "Unknown"
             print("Agent report completed.")
         else:
             agent_report = "Detailed analysis could not be performed because the heatmap could not be generated."
+            agent_report_model = "N/A (Heatmap unavailable)"
 
         return jsonify({
             "predicted_class": predicted_class,
@@ -405,7 +641,8 @@ def predict():
                 "xai": "Guided Grad-CAM + foreground-masked visualization",
             },
             "heatmap": heatmap_base64,
-            "agent_report": agent_report
+            "agent_report": agent_report,
+            "agent_report_model": agent_report_model,
         })
 
     except Exception as e:
