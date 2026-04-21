@@ -1,4 +1,4 @@
-# WBC Analyzer
+# WBC Analyzer: AI-Powered Pathology Assistant
 
 Multi-modal agentic AI for white blood cell classification.
 
