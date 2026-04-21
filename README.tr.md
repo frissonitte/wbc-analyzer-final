@@ -1,5 +1,9 @@
 # WBC Analizörü: Yapay Zeka Destekli Patoloji Asistanı
 
+<p align="center">
+  <img src="banner.png" alt="WBC Analyzer Banner" width="100%">
+</p>
+
 Beyaz Kan Hücresi sınıflandırması için çok modlu, agentic yapay zeka sistemi.
 
 Bu dosya projenin Türkçe dokümantasyonudur. İngilizce ana sürüm için [README.md](README.md) dosyasına bakın.

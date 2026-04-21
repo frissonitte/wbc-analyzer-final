@@ -1,5 +1,9 @@
 # WBC Analyzer: AI-Powered Pathology Assistant
 
+<p align="center">
+  <img src="banner.png" alt="WBC Analyzer Banner" width="100%">
+</p>
+
 Multi-modal agentic AI for white blood cell classification.
 
 This repository contains the English project documentation. The Turkish version is available in [README.tr.md](README.tr.md).
