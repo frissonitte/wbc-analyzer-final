@@ -9,6 +9,7 @@ import cv2
 import tensorflow as tf
 import traceback
 from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
 from PIL import Image, UnidentifiedImageError
 import keras
 import base64
@@ -33,6 +34,7 @@ except:
     pass
 
 app = Flask(__name__)
+CORS(app)
 
 
 def get_main_output_tensor(model):

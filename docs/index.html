@@ -807,10 +807,13 @@
                 formData.append('file', fileInput.files[0]);
 
                 try {
-                    const response = await fetch('/predict', {
-                        method: 'POST',
-                        body: formData,
-                    });
+                    const response = await fetch(
+                        'https://frissonitte-wbc-analyzer.hf.space/predict',
+                        {
+                            method: 'POST',
+                            body: formData,
+                        },
+                    );
                     const data = await response.json();
                     loader.style.display = 'none';
 
